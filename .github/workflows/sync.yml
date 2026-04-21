@@ -25,5 +25,4 @@ jobs:
         env:
           JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
-          SYNC_LIMIT: "5"
         run: python sync.py
