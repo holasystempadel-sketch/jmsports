@@ -16,7 +16,7 @@ HEADERS_SHOPIFY = {
     'Content-Type': 'application/json'
 }
 
-# ─── SHOPIFY HELPERS ───────────────────────────────────────────────────────────
+# ─── SHOPIFY ───────────────────────────────────────────────────────────────────
 
 def shopify_get(endpoint):
     url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
@@ -41,7 +41,7 @@ def shopify_delete(endpoint):
     r = requests.delete(url, headers=HEADERS_SHOPIFY)
     return r.status_code
 
-# ─── JIM SPORTS HELPERS ────────────────────────────────────────────────────────
+# ─── JIM SPORTS ────────────────────────────────────────────────────────────────
 
 def jim_get(endpoint):
     url = f'https://api.jimsports.com/v1/{endpoint}'
@@ -62,111 +62,90 @@ def jim_get_images(product_id):
     except:
         return []
 
-# ─── COLECCIONES ───────────────────────────────────────────────────────────────
+# ─── PASO 1: BORRAR PRODUCTOS EXISTENTES ──────────────────────────────────────
 
-def get_or_create_shopify_collection(title, handle):
-    """Busca una colección por handle, si no existe la crea."""
-    data = shopify_get(f'custom_collections.json?handle={handle}')
-    cols = data.get('custom_collections', [])
-    if cols:
-        return cols[0]['id']
-    # Crear
-    result = shopify_post('custom_collections.json', {
-        'custom_collection': {
-            'title': title,
-            'handle': handle,
-            'published': True
-        }
-    })
-    print(f'  ✓ Colección creada: {title}')
-    return result['custom_collection']['id']
+def delete_all_jimsports_products():
+    print('\n=== Borrando productos Jim Sports existentes ===')
+    deleted = 0
+    while True:
+        data = shopify_get('products.json?limit=250&fields=id,tags')
+        products = [p for p in data.get('products', []) if 'jimsports' in p.get('tags', '')]
+        if not products:
+            break
+        for p in products:
+            shopify_delete(f'products/{p["id"]}.json')
+            deleted += 1
+            time.sleep(0.3)
+        print(f'  {deleted} productos borrados...')
+    print(f'  ✓ Total borrados: {deleted}')
 
-def add_product_to_collection(collection_id, product_id):
-    try:
-        shopify_post('collects.json', {
-            'collect': {
-                'collection_id': collection_id,
-                'product_id': product_id
-            }
-        })
-    except:
-        pass  # Ya existe el enlace
+# ─── PASO 2: SINCRONIZAR COLECCIONES ──────────────────────────────────────────
 
 def sync_collections():
-    """Sincroniza categorías de Jim Sports como colecciones en Shopify."""
     print('\n=== Sincronizando colecciones ===')
     categories = jim_get('categories')
-    collection_map = {}  # jim_category_id -> shopify_collection_id
+    collection_map = {}
 
     for cat in categories:
         cat_id = str(cat.get('id', ''))
         name_obj = cat.get('name', {})
         name = name_obj.get('es-ES') or name_obj.get('en-US') or f'Categoria {cat_id}'
-        handle = f'jimsports-{cat_id}'
-        shopify_id = get_or_create_shopify_collection(name, handle)
+        handle = f'jimsports-cat-{cat_id}'
+
+        # Buscar si ya existe
+        data = shopify_get(f'custom_collections.json?handle={handle}')
+        cols = data.get('custom_collections', [])
+        if cols:
+            shopify_id = cols[0]['id']
+        else:
+            result = shopify_post('custom_collections.json', {
+                'custom_collection': {
+                    'title': name,
+                    'handle': handle,
+                    'published': True
+                }
+            })
+            shopify_id = result['custom_collection']['id']
+            print(f'  ✓ Creada: {name}')
+
         collection_map[cat_id] = shopify_id
         time.sleep(0.3)
 
-    print(f'  {len(collection_map)} colecciones sincronizadas')
+    print(f'  ✓ {len(collection_map)} colecciones listas')
     return collection_map
 
-# ─── PRODUCTOS ─────────────────────────────────────────────────────────────────
-
-def get_all_shopify_products():
-    """Obtiene todos los productos de Shopify con tag jimsports."""
-    products = {}
-    url = 'products.json?limit=250&fields=id,handle,variants,tags'
-    while url:
-        data = shopify_get(url)
-        for p in data.get('products', []):
-            if 'jimsports' in p.get('tags', ''):
-                products[p['handle']] = p
-        # Paginación
-        url = None  # Simplificado - añadir paginación si >250 productos
-    return products
-
-def get_prices():
-    prices = jim_get('prices')
-    return {str(p['product_id']): str(p.get('price', '0.00')) for p in prices}
-
-def get_stock():
-    stock = jim_get('stock')
-    return {str(s['product_id']): int(s.get('stock', 0)) for s in stock}
+# ─── PASO 3: SINCRONIZAR PRODUCTOS ────────────────────────────────────────────
 
 def sync_products(collection_map):
-    """Sincroniza productos de Jim Sports en Shopify."""
     print('\n=== Sincronizando productos ===')
 
-    # Obtener datos Jim Sports
-    print('Obteniendo lista de productos...')
-    jim_product_ids = jim_get('products')  # Devuelve lista de IDs
-    print(f'  {len(jim_product_ids)} productos en Jim Sports')
+    print('Obteniendo IDs de Jim Sports...')
+    jim_ids = jim_get('products')
+    print(f'  {len(jim_ids)} productos en Jim Sports')
 
     print('Obteniendo precios...')
-    prices = get_prices()
+    prices_raw = jim_get('prices')
+    prices = {str(p['product_id']): str(p.get('price', '0.00')) for p in prices_raw}
 
     print('Obteniendo stock...')
-    stock_data = get_stock()
+    stock_raw = jim_get('stock')
+    stock_data = {str(s['product_id']): int(s.get('stock', 0)) for s in stock_raw}
 
-    # Productos actuales en Shopify
-    print('Obteniendo productos actuales en Shopify...')
-    existing = get_all_shopify_products()
-    print(f'  {len(existing)} productos Jim Sports ya en Shopify')
+    created = skipped = 0
 
-    created = updated = skipped = 0
-
-    for i, jim_id in enumerate(jim_product_ids):
+    for i, jim_id in enumerate(jim_ids):
         jim_id = str(jim_id)
 
         try:
             product = jim_get(f'product/{jim_id}')
         except Exception as e:
-            print(f'  Error obteniendo producto {jim_id}: {e}')
+            print(f'  ✗ Error producto {jim_id}: {e}')
             skipped += 1
+            time.sleep(1)
             continue
 
         ean = product.get('ean13', '')
-        handle = f'jimsports-{ean}' if ean else f'jimsports-{jim_id}'
+        handle = f'jimsports-{ean}' if ean else f'jimsports-id-{jim_id}'
 
         name_obj = product.get('name', {})
         name = name_obj.get('es-ES') or name_obj.get('en-US') or f'Producto {jim_id}'
@@ -176,37 +155,21 @@ def sync_products(collection_map):
 
         price = prices.get(jim_id, '0.00')
         stock = stock_data.get(jim_id, 0)
-        brand = product.get('brand', {}).get('name', '')
-
-        # Colección del producto
+        brand = product.get('brand', {}).get('name', '') if product.get('brand') else ''
         cat_id = str(product.get('category_id', ''))
-        shopify_collection_id = collection_map.get(cat_id)
 
-        if handle in existing:
-            # Actualizar precio y stock
-            shopify_id = existing[handle]['id']
-            variant_id = existing[handle]['variants'][0]['id']
-            shopify_put(f'products/{shopify_id}.json', {
-                'product': {
-                    'id': shopify_id,
-                    'variants': [{
-                        'id': variant_id,
-                        'price': price,
-                        'inventory_quantity': stock
-                    }]
-                }
-            })
-            updated += 1
-        else:
-            # Crear producto con imágenes
-            images = jim_get_images(jim_id)
+        # Obtener imágenes
+        images = jim_get_images(jim_id)
+
+        # Crear producto
+        try:
             result = shopify_post('products.json', {
                 'product': {
                     'title': name,
                     'body_html': desc,
                     'handle': handle,
                     'vendor': brand,
-                    'tags': 'jimsports',
+                    'tags': f'jimsports,jimsports-cat-{cat_id}',
                     'images': images,
                     'variants': [{
                         'sku': ean,
@@ -216,30 +179,41 @@ def sync_products(collection_map):
                     }]
                 }
             })
-            new_shopify_id = result['product']['id']
+            new_id = result['product']['id']
 
             # Añadir a colección
-            if shopify_collection_id:
-                add_product_to_collection(shopify_collection_id, new_shopify_id)
+            col_id = collection_map.get(cat_id)
+            if col_id:
+                try:
+                    shopify_post('collects.json', {
+                        'collect': {
+                            'collection_id': col_id,
+                            'product_id': new_id
+                        }
+                    })
+                except:
+                    pass
 
             created += 1
 
-        if (created + updated) % 20 == 0 and (created + updated) > 0:
-            print(f'  Progreso: {created} creados, {updated} actualizados, {skipped} errores...')
+        except Exception as e:
+            print(f'  ✗ Error creando {name}: {e}')
+            skipped += 1
 
-        time.sleep(0.3)
+        if (i + 1) % 50 == 0:
+            print(f'  Progreso: {i+1}/{len(jim_ids)} — {created} creados, {skipped} errores')
 
-    print(f'  ✓ Completado: {created} creados, {updated} actualizados, {skipped} errores')
+        time.sleep(0.4)
+
+    print(f'  ✓ Completado: {created} creados, {skipped} errores')
 
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
 
-def sync():
+if __name__ == '__main__':
     print('==============================')
     print('  JimSports → Shopify Sync')
     print('==============================')
+    delete_all_jimsports_products()
     collection_map = sync_collections()
     sync_products(collection_map)
     print('\n✓ Sync completado')
-
-if __name__ == '__main__':
-    sync()
