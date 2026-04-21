@@ -16,74 +16,103 @@ HEADERS_SHOPIFY = {
     'Content-Type': 'application/json'
 }
 
-# ─── SHOPIFY ───────────────────────────────────────────────────────────────────
+# ─── HELPERS CON RETRY ────────────────────────────────────────────────────────
 
-def shopify_get(endpoint):
+def shopify_request(method, endpoint, data=None, retries=5):
     url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
-    r = requests.get(url, headers=HEADERS_SHOPIFY)
-    r.raise_for_status()
-    return r.json()
+    for attempt in range(retries):
+        try:
+            if method == 'GET':
+                r = requests.get(url, headers=HEADERS_SHOPIFY)
+            elif method == 'POST':
+                r = requests.post(url, headers=HEADERS_SHOPIFY, json=data)
+            elif method == 'PUT':
+                r = requests.put(url, headers=HEADERS_SHOPIFY, json=data)
+            elif method == 'DELETE':
+                r = requests.delete(url, headers=HEADERS_SHOPIFY)
+                return r.status_code
 
-def shopify_post(endpoint, data):
-    url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
-    r = requests.post(url, headers=HEADERS_SHOPIFY, json=data)
-    r.raise_for_status()
-    return r.json()
+            if r.status_code == 429:
+                wait = int(r.headers.get('Retry-After', 10))
+                print(f'  ⏳ Rate limit Shopify, esperando {wait}s...')
+                time.sleep(wait)
+                continue
 
-def shopify_put(endpoint, data):
-    url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
-    r = requests.put(url, headers=HEADERS_SHOPIFY, json=data)
-    r.raise_for_status()
-    return r.json()
+            r.raise_for_status()
+            return r.json()
 
-def shopify_delete(endpoint):
-    url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
-    r = requests.delete(url, headers=HEADERS_SHOPIFY)
-    return r.status_code
+        except requests.exceptions.RequestException as e:
+            if attempt < retries - 1:
+                print(f'  ⚠️  Error intento {attempt+1}: {e}, reintentando...')
+                time.sleep(5)
+            else:
+                raise
+    return None
 
-# ─── JIM SPORTS ────────────────────────────────────────────────────────────────
-
-def jim_get(endpoint):
+def jim_request(endpoint, retries=5):
     url = f'https://api.jimsports.com/v1/{endpoint}'
-    r = requests.get(url, headers=HEADERS_JIM)
-    r.raise_for_status()
-    return r.json()
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=HEADERS_JIM)
+            if r.status_code == 429:
+                print(f'  ⏳ Rate limit Jim Sports, esperando 10s...')
+                time.sleep(10)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException as e:
+            if attempt < retries - 1:
+                print(f'  ⚠️  Error intento {attempt+1}: {e}, reintentando...')
+                time.sleep(5)
+            else:
+                print(f'  ✗ Fallo definitivo en {endpoint}: {e}')
+                return None
+    return None
+
+# ─── PAGINACIÓN SHOPIFY ───────────────────────────────────────────────────────
+
+def shopify_get_all_products():
+    """Obtiene todos los productos con paginación correcta por since_id."""
+    products = []
+    since_id = 0
+    while True:
+        data = shopify_request('GET', f'products.json?limit=250&since_id={since_id}&fields=id,handle,tags,variants')
+        if not data:
+            break
+        batch = data.get('products', [])
+        if not batch:
+            break
+        products.extend(batch)
+        print(f'  {len(products)} productos obtenidos de Shopify...')
+        if len(batch) < 250:
+            break
+        since_id = batch[-1]['id']
+        time.sleep(0.5)
+    return products
+
+# ─── IMÁGENES ─────────────────────────────────────────────────────────────────
 
 def jim_get_images(product_id):
-    try:
-        data = jim_get(f'product_images/{product_id}')
-        images = []
-        if data.get('main'):
-            images.append({'src': data['main']})
-        for img in data.get('others', []):
-            if img:
-                images.append({'src': img})
-        return images
-    except:
+    data = jim_request(f'product_images/{product_id}')
+    if not data:
         return []
+    images = []
+    if data.get('main'):
+        images.append({'src': data['main']})
+    for img in data.get('others', []):
+        if img:
+            images.append({'src': img})
+    return images
 
-# ─── PASO 1: BORRAR PRODUCTOS EXISTENTES ──────────────────────────────────────
-
-def delete_all_jimsports_products():
-    print('\n=== Borrando productos Jim Sports existentes ===')
-    deleted = 0
-    while True:
-        data = shopify_get('products.json?limit=250&fields=id,tags')
-        products = [p for p in data.get('products', []) if 'jimsports' in p.get('tags', '')]
-        if not products:
-            break
-        for p in products:
-            shopify_delete(f'products/{p["id"]}.json')
-            deleted += 1
-            time.sleep(0.3)
-        print(f'  {deleted} productos borrados...')
-    print(f'  ✓ Total borrados: {deleted}')
-
-# ─── PASO 2: SINCRONIZAR COLECCIONES ──────────────────────────────────────────
+# ─── COLECCIONES ──────────────────────────────────────────────────────────────
 
 def sync_collections():
     print('\n=== Sincronizando colecciones ===')
-    categories = jim_get('categories')
+    categories = jim_request('categories')
+    if not categories:
+        print('  ✗ No se pudieron obtener categorías')
+        return {}
+
     collection_map = {}
 
     for cat in categories:
@@ -92,128 +121,41 @@ def sync_collections():
         name = name_obj.get('es-ES') or name_obj.get('en-US') or f'Categoria {cat_id}'
         handle = f'jimsports-cat-{cat_id}'
 
-        # Buscar si ya existe
-        data = shopify_get(f'custom_collections.json?handle={handle}')
-        cols = data.get('custom_collections', [])
+        data = shopify_request('GET', f'custom_collections.json?handle={handle}')
+        cols = data.get('custom_collections', []) if data else []
+
         if cols:
             shopify_id = cols[0]['id']
+            print(f'  → Ya existe: {name}')
         else:
-            result = shopify_post('custom_collections.json', {
+            result = shopify_request('POST', 'custom_collections.json', {
                 'custom_collection': {
                     'title': name,
                     'handle': handle,
                     'published': True
                 }
             })
-            shopify_id = result['custom_collection']['id']
-            print(f'  ✓ Creada: {name}')
+            if result:
+                shopify_id = result['custom_collection']['id']
+                print(f'  ✓ Creada: {name}')
+            else:
+                print(f'  ✗ Error creando: {name}')
+                continue
 
         collection_map[cat_id] = shopify_id
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     print(f'  ✓ {len(collection_map)} colecciones listas')
     return collection_map
 
-# ─── PASO 3: SINCRONIZAR PRODUCTOS ────────────────────────────────────────────
+# ─── PRODUCTOS ────────────────────────────────────────────────────────────────
 
 def sync_products(collection_map):
     print('\n=== Sincronizando productos ===')
 
     print('Obteniendo IDs de Jim Sports...')
-    jim_ids = jim_get('products')
-    print(f'  {len(jim_ids)} productos en Jim Sports')
-
-    print('Obteniendo precios...')
-    prices_raw = jim_get('prices')
-    prices = {str(p['product_id']): str(p.get('price', '0.00')) for p in prices_raw}
-
-    print('Obteniendo stock...')
-    stock_raw = jim_get('stock')
-    stock_data = {str(s['product_id']): int(s.get('stock', 0)) for s in stock_raw}
-
-    created = skipped = 0
-
-    for i, jim_id in enumerate(jim_ids):
-        jim_id = str(jim_id)
-
-        try:
-            product = jim_get(f'product/{jim_id}')
-        except Exception as e:
-            print(f'  ✗ Error producto {jim_id}: {e}')
-            skipped += 1
-            time.sleep(1)
-            continue
-
-        ean = product.get('ean13', '')
-        handle = f'jimsports-{ean}' if ean else f'jimsports-id-{jim_id}'
-
-        name_obj = product.get('name', {})
-        name = name_obj.get('es-ES') or name_obj.get('en-US') or f'Producto {jim_id}'
-
-        desc_obj = product.get('description', {})
-        desc = desc_obj.get('es-ES') or desc_obj.get('en-US') or ''
-
-        price = prices.get(jim_id, '0.00')
-        stock = stock_data.get(jim_id, 0)
-        brand = product.get('brand', {}).get('name', '') if product.get('brand') else ''
-        cat_id = str(product.get('category_id', ''))
-
-        # Obtener imágenes
-        images = jim_get_images(jim_id)
-
-        # Crear producto
-        try:
-            result = shopify_post('products.json', {
-                'product': {
-                    'title': name,
-                    'body_html': desc,
-                    'handle': handle,
-                    'vendor': brand,
-                    'tags': f'jimsports,jimsports-cat-{cat_id}',
-                    'images': images,
-                    'variants': [{
-                        'sku': ean,
-                        'price': price,
-                        'inventory_quantity': stock,
-                        'inventory_management': 'shopify'
-                    }]
-                }
-            })
-            new_id = result['product']['id']
-
-            # Añadir a colección
-            col_id = collection_map.get(cat_id)
-            if col_id:
-                try:
-                    shopify_post('collects.json', {
-                        'collect': {
-                            'collection_id': col_id,
-                            'product_id': new_id
-                        }
-                    })
-                except:
-                    pass
-
-            created += 1
-
-        except Exception as e:
-            print(f'  ✗ Error creando {name}: {e}')
-            skipped += 1
-
-        if (i + 1) % 50 == 0:
-            print(f'  Progreso: {i+1}/{len(jim_ids)} — {created} creados, {skipped} errores')
-
-        time.sleep(0.4)
-
-    print(f'  ✓ Completado: {created} creados, {skipped} errores')
-
-# ─── MAIN ──────────────────────────────────────────────────────────────────────
-
-if __name__ == '__main__':
-    print('==============================')
-    print('  JimSports → Shopify Sync')
-    print('==============================')
-    delete_all_jimsports_products()
-    collection_map = sync_collections()
-    sync_products(collection_map)
-    print('\n✓ Sync completado')
+    jim_ids = jim_request('products')
+    if not jim_ids:
+        print('  ✗ No se pudieron obtener productos')
+        return
+    print(f'  {l
