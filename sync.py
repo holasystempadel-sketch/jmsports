@@ -99,44 +99,7 @@ def jim_get_images(product_id):
     return images
 
 
-def sync_collections():
-    print('=== Sincronizando colecciones ===')
-    categories = jim_request('categories')
-    if not categories:
-        print('No se pudieron obtener categorias')
-        return {}
-    collection_map = {}
-    for cat in categories:
-        cat_id = str(cat.get('id', ''))
-        name_obj = cat.get('name', {})
-        name = name_obj.get('es-ES') or name_obj.get('en-US') or f'Categoria {cat_id}'
-        handle = f'jimsports-cat-{cat_id}'
-        data = shopify_request('GET', f'custom_collections.json?handle={handle}')
-        cols = data.get('custom_collections', []) if data else []
-        if cols:
-            shopify_id = cols[0]['id']
-            print(f'Ya existe: {name}')
-        else:
-            result = shopify_request('POST', 'custom_collections.json', {
-                'custom_collection': {
-                    'title': name,
-                    'handle': handle,
-                    'published': True
-                }
-            })
-            if result:
-                shopify_id = result['custom_collection']['id']
-                print(f'Creada: {name}')
-            else:
-                print(f'Error creando: {name}')
-                continue
-        collection_map[cat_id] = shopify_id
-        time.sleep(0.5)
-    print(f'{len(collection_map)} colecciones listas')
-    return collection_map
-
-
-def sync_products(collection_map):
+def sync_products():
     print('=== Sincronizando productos ===')
     print('Obteniendo IDs de Jim Sports...')
     jim_ids = jim_request('products')
@@ -223,16 +186,7 @@ def sync_products(collection_map):
                 }
             })
             if result:
-                new_id = result['product']['id']
                 created += 1
-                col_id = collection_map.get(cat_id)
-                if col_id:
-                    shopify_request('POST', 'collects.json', {
-                        'collect': {
-                            'collection_id': col_id,
-                            'product_id': new_id
-                        }
-                    })
             else:
                 skipped += 1
 
@@ -248,6 +202,5 @@ if __name__ == '__main__':
     print('==============================')
     print('JimSports -> Shopify Sync')
     print('==============================')
-    collection_map = sync_collections()
-    sync_products(collection_map)
+    sync_products()
     print('Sync completado')
