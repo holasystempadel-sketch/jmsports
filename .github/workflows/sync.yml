@@ -1,3 +1,26 @@
+name: JimSports Sync
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install requests
+
       - name: Ejecutar sync
         env:
           JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
