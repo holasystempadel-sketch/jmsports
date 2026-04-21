@@ -16,8 +16,6 @@ HEADERS_SHOPIFY = {
     'Content-Type': 'application/json'
 }
 
-# ─── HELPERS CON RETRY ────────────────────────────────────────────────────────
-
 def shopify_request(method, endpoint, data=None, retries=5):
     url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
     for attempt in range(retries):
@@ -34,7 +32,7 @@ def shopify_request(method, endpoint, data=None, retries=5):
 
             if r.status_code == 429:
                 wait = int(r.headers.get('Retry-After', 10))
-                print(f'  ⏳ Rate limit Shopify, esperando {wait}s...')
+                print(f'Rate limit Shopify, esperando {wait}s...')
                 time.sleep(wait)
                 continue
 
@@ -43,7 +41,7 @@ def shopify_request(method, endpoint, data=None, retries=5):
 
         except requests.exceptions.RequestException as e:
             if attempt < retries - 1:
-                print(f'  ⚠️  Error intento {attempt+1}: {e}, reintentando...')
+                print(f'Error intento {attempt+1}: {e}, reintentando...')
                 time.sleep(5)
             else:
                 raise
@@ -55,24 +53,21 @@ def jim_request(endpoint, retries=5):
         try:
             r = requests.get(url, headers=HEADERS_JIM)
             if r.status_code == 429:
-                print(f'  ⏳ Rate limit Jim Sports, esperando 10s...')
+                print('Rate limit Jim Sports, esperando 10s...')
                 time.sleep(10)
                 continue
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException as e:
             if attempt < retries - 1:
-                print(f'  ⚠️  Error intento {attempt+1}: {e}, reintentando...')
+                print(f'Error intento {attempt+1}: {e}, reintentando...')
                 time.sleep(5)
             else:
-                print(f'  ✗ Fallo definitivo en {endpoint}: {e}')
+                print(f'Fallo definitivo en {endpoint}: {e}')
                 return None
     return None
 
-# ─── PAGINACIÓN SHOPIFY ───────────────────────────────────────────────────────
-
 def shopify_get_all_products():
-    """Obtiene todos los productos con paginación correcta por since_id."""
     products = []
     since_id = 0
     while True:
@@ -83,14 +78,12 @@ def shopify_get_all_products():
         if not batch:
             break
         products.extend(batch)
-        print(f'  {len(products)} productos obtenidos de Shopify...')
+        print(f'{len(products)} productos obtenidos de Shopify...')
         if len(batch) < 250:
             break
         since_id = batch[-1]['id']
         time.sleep(0.5)
     return products
-
-# ─── IMÁGENES ─────────────────────────────────────────────────────────────────
 
 def jim_get_images(product_id):
     data = jim_request(f'product_images/{product_id}')
@@ -104,13 +97,11 @@ def jim_get_images(product_id):
             images.append({'src': img})
     return images
 
-# ─── COLECCIONES ──────────────────────────────────────────────────────────────
-
 def sync_collections():
-    print('\n=== Sincronizando colecciones ===')
+    print('=== Sincronizando colecciones ===')
     categories = jim_request('categories')
     if not categories:
-        print('  ✗ No se pudieron obtener categorías')
+        print('No se pudieron obtener categorias')
         return {}
 
     collection_map = {}
@@ -126,7 +117,7 @@ def sync_collections():
 
         if cols:
             shopify_id = cols[0]['id']
-            print(f'  → Ya existe: {name}')
+            print(f'Ya existe: {name}')
         else:
             result = shopify_request('POST', 'custom_collections.json', {
                 'custom_collection': {
@@ -137,25 +128,15 @@ def sync_collections():
             })
             if result:
                 shopify_id = result['custom_collection']['id']
-                print(f'  ✓ Creada: {name}')
+                print(f'Creada: {name}')
             else:
-                print(f'  ✗ Error creando: {name}')
+                print(f'Error creando: {name}')
                 continue
 
         collection_map[cat_id] = shopify_id
         time.sleep(0.5)
 
-    print(f'  ✓ {len(collection_map)} colecciones listas')
+    print(f'{len(collection_map)} colecciones listas')
     return collection_map
 
-# ─── PRODUCTOS ────────────────────────────────────────────────────────────────
-
 def sync_products(collection_map):
-    print('\n=== Sincronizando productos ===')
-
-    print('Obteniendo IDs de Jim Sports...')
-    jim_ids = jim_request('products')
-    if not jim_ids:
-        print('  ✗ No se pudieron obtener productos')
-        return
-    print(f'  {l
