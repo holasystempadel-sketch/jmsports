@@ -17,19 +17,11 @@ HEADERS_SHOPIFY = {
 }
 
 
-def shopify_request(method, endpoint, data=None, retries=5):
+def shopify_post(endpoint, data, retries=5):
     url = f'https://{SHOPIFY_STORE}/admin/api/2024-01/{endpoint}'
     for attempt in range(retries):
         try:
-            if method == 'GET':
-                r = requests.get(url, headers=HEADERS_SHOPIFY)
-            elif method == 'POST':
-                r = requests.post(url, headers=HEADERS_SHOPIFY, json=data)
-            elif method == 'PUT':
-                r = requests.put(url, headers=HEADERS_SHOPIFY, json=data)
-            elif method == 'DELETE':
-                r = requests.delete(url, headers=HEADERS_SHOPIFY)
-                return r.status_code
+            r = requests.post(url, headers=HEADERS_SHOPIFY, json=data)
             if r.status_code == 429:
                 wait = int(r.headers.get('Retry-After', 10))
                 print(f'Rate limit Shopify, esperando {wait}s...')
@@ -42,7 +34,8 @@ def shopify_request(method, endpoint, data=None, retries=5):
                 print(f'Error intento {attempt+1}: {e}, reintentando...')
                 time.sleep(5)
             else:
-                raise
+                print(f'Fallo creando en {endpoint}: {e}')
+                return None
     return None
 
 
@@ -67,25 +60,6 @@ def jim_request(endpoint, retries=5):
     return None
 
 
-def shopify_get_all_products():
-    products = []
-    since_id = 0
-    while True:
-        data = shopify_request('GET', f'products.json?limit=250&since_id={since_id}&fields=id,handle,tags,variants')
-        if not data:
-            break
-        batch = data.get('products', [])
-        if not batch:
-            break
-        products.extend(batch)
-        print(f'{len(products)} productos obtenidos de Shopify...')
-        if len(batch) < 250:
-            break
-        since_id = batch[-1]['id']
-        time.sleep(0.5)
-    return products
-
-
 def jim_get_images(product_id):
     data = jim_request(f'product_images/{product_id}')
     if not data:
@@ -101,6 +75,7 @@ def jim_get_images(product_id):
 
 def sync_products():
     print('=== Sincronizando productos ===')
+
     print('Obteniendo IDs de Jim Sports...')
     jim_ids = jim_request('products')
     if not jim_ids:
@@ -116,13 +91,7 @@ def sync_products():
     stock_raw = jim_request('stock')
     stock_data = {str(s['product_id']): int(s.get('stock', 0)) for s in stock_raw} if stock_raw else {}
 
-    print('Obteniendo productos existentes en Shopify...')
-    existing_products = shopify_get_all_products()
-    existing_handles = {p['handle']: p for p in existing_products}
-    print(f'{len(existing_handles)} productos ya en Shopify')
-
     created = 0
-    updated = 0
     skipped = 0
     total = len(jim_ids)
 
@@ -150,52 +119,39 @@ def sync_products():
             brand = product['brand'].get('name', '')
 
         cat_id = str(product.get('category_id', ''))
+        brand_tag = brand.lower().replace(' ', '-') if brand else 'sin-marca'
 
-        if handle in existing_handles:
-            shopify_id = existing_handles[handle]['id']
-            variant_id = existing_handles[handle]['variants'][0]['id']
-            shopify_request('PUT', f'products/{shopify_id}.json', {
-                'product': {
-                    'id': shopify_id,
-                    'variants': [{
-                        'id': variant_id,
-                        'price': price,
-                        'inventory_quantity': stock
-                    }]
-                }
-            })
-            updated += 1
+        images = jim_get_images(jim_id)
+        time.sleep(0.3)
+
+        result = shopify_post('products.json', {
+            'product': {
+                'title': name,
+                'body_html': desc,
+                'handle': handle,
+                'vendor': brand,
+                'tags': f'jimsports,marca-{brand_tag},cat-{cat_id}',
+                'images': images,
+                'variants': [{
+                    'sku': ean,
+                    'price': price,
+                    'inventory_quantity': stock,
+                    'inventory_management': 'shopify'
+                }]
+            }
+        })
+
+        if result:
+            created += 1
         else:
-            images = jim_get_images(jim_id)
-            time.sleep(0.3)
-            brand_tag = brand.lower().replace(' ', '-') if brand else 'sin-marca'
-            result = shopify_request('POST', 'products.json', {
-                'product': {
-                    'title': name,
-                    'body_html': desc,
-                    'handle': handle,
-                    'vendor': brand,
-                    'tags': f'jimsports,marca-{brand_tag},cat-{cat_id}',
-                    'images': images,
-                    'variants': [{
-                        'sku': ean,
-                        'price': price,
-                        'inventory_quantity': stock,
-                        'inventory_management': 'shopify'
-                    }]
-                }
-            })
-            if result:
-                created += 1
-            else:
-                skipped += 1
+            skipped += 1
 
         if (i + 1) % 100 == 0:
-            print(f'[{i+1}/{total}] {created} creados, {updated} actualizados, {skipped} errores')
+            print(f'[{i+1}/{total}] {created} creados, {skipped} errores')
 
         time.sleep(0.5)
 
-    print(f'FINAL: {created} creados, {updated} actualizados, {skipped} errores')
+    print(f'FINAL: {created} creados, {skipped} errores')
 
 
 if __name__ == '__main__':
