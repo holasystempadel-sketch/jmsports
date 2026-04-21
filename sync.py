@@ -6,10 +6,9 @@ JIMSPORTS_API_KEY = os.environ['JIMSPORTS_API_KEY']
 SHOPIFY_TOKEN = os.environ['SHOPIFY_TOKEN']
 SHOPIFY_STORE = 'xqksc3-ua.myshopify.com'
 API_VERSION = '2025-10'
-SYNC_LIMIT = int(os.environ.get('SYNC_LIMIT', '0'))  # 0 = sin límite; útil para pruebas
+SYNC_LIMIT = int(os.environ.get('SYNC_LIMIT', '0'))
 
 SHOPIFY_BASE = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}'
-
 HEADERS_JIM = {
     'ClientAuth': JIMSPORTS_API_KEY,
     'Accept': 'application/json',
@@ -28,17 +27,18 @@ def shopify_request(method, endpoint, data=None, retries=5):
             r = requests.request(method, url, headers=HEADERS_SHOPIFY, json=data, timeout=30)
             if r.status_code == 429:
                 wait = int(r.headers.get('Retry-After', 10))
-                print(f'Rate limit Shopify, esperando {wait}s...')
+                print(f'  Rate limit Shopify, esperando {wait}s...')
                 time.sleep(wait)
                 continue
+            if r.status_code >= 400:
+                print(f'  Shopify {method} HTTP {r.status_code}: {r.text[:200]}')
             r.raise_for_status()
             return r
         except requests.exceptions.RequestException as e:
             if attempt < retries - 1:
-                print(f'Error Shopify intento {attempt+1}: {e}')
                 time.sleep(5)
             else:
-                print(f'Fallo definitivo Shopify {method} {endpoint}: {e}')
+                print(f'  FALLO Shopify {method} {endpoint}: {e}')
                 return None
     return None
 
@@ -49,32 +49,17 @@ def jim_request(endpoint, retries=5):
         try:
             r = requests.get(url, headers=HEADERS_JIM, timeout=30)
             if r.status_code == 429:
-                print('Rate limit Jim Sports, esperando 10s...')
                 time.sleep(10)
                 continue
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException as e:
             if attempt < retries - 1:
-                print(f'Error Jim intento {attempt+1}: {e}')
-                time.sleep(5)
+                time.sleep(3)
             else:
-                print(f'Fallo definitivo Jim {endpoint}: {e}')
+                print(f'  FALLO Jim {endpoint}: {e}')
                 return None
     return None
-
-
-def jim_get_images(product_id):
-    data = jim_request(f'product_images/{product_id}')
-    if not data:
-        return []
-    images = []
-    if data.get('main'):
-        images.append({'src': data['main']})
-    for img in (data.get('others') or []):
-        if img:
-            images.append({'src': img})
-    return images
 
 
 def get_location_id():
@@ -119,6 +104,39 @@ def set_inventory(inventory_item_id, location_id, quantity):
     })
 
 
+def fetch_brands():
+    data = jim_request('brands')
+    return {str(b['id']): b.get('name', '') for b in (data or [])}
+
+
+def pick_ean(product):
+    variants = product.get('variants') or []
+    for v in variants:
+        if v.get('default') and not v.get('discontinued') and v.get('ean13'):
+            return v['ean13']
+    for v in variants:
+        if not v.get('discontinued') and v.get('ean13'):
+            return v['ean13']
+    return product.get('ean13') or None
+
+
+def pick_stock(product):
+    variants = product.get('variants') or []
+    if variants:
+        total = 0
+        for v in variants:
+            if not v.get('discontinued'):
+                try:
+                    total += int(v.get('stock') or 0)
+                except (TypeError, ValueError):
+                    pass
+        return total
+    try:
+        return int(product.get('stock') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def sync():
     print('=== Sincronizando JimSports -> Shopify ===')
 
@@ -128,11 +146,12 @@ def sync():
         return
     print(f'Location id: {location_id}')
 
-    print('Listando productos JimSports ya en Shopify...')
-    existing = fetch_existing_by_sku()
-    print(f'  {len(existing)} ya existen')
+    brands = fetch_brands()
+    print(f'{len(brands)} marcas cargadas')
 
-    print('Obteniendo lista de Jim Sports...')
+    existing = fetch_existing_by_sku()
+    print(f'{len(existing)} productos JimSports ya en Shopify')
+
     jim_ids = jim_request('products')
     if not jim_ids:
         print('ERROR: no se pudieron obtener productos de Jim Sports')
@@ -140,26 +159,25 @@ def sync():
     if SYNC_LIMIT:
         jim_ids = jim_ids[:SYNC_LIMIT]
     total = len(jim_ids)
-    print(f'  {total} productos a procesar')
+    print(f'{total} productos a procesar\n')
 
-    print('Obteniendo precios y stock...')
-    prices_raw = jim_request('prices') or []
-    prices = {str(p['product_id']): str(p.get('price', '0.00')) for p in prices_raw}
-    stock_raw = jim_request('stock') or []
-    stocks = {str(s['product_id']): int(s.get('stock', 0)) for s in stock_raw}
-
-    created = updated = skipped = 0
+    created = updated = no_ean = disc = errors = 0
 
     for i, jim_id in enumerate(jim_ids, 1):
         jim_id = str(jim_id)
         product = jim_request(f'product/{jim_id}')
         if not product:
-            skipped += 1
+            errors += 1
             continue
 
-        ean = (product.get('ean13') or '').strip()
+        if product.get('discontinued'):
+            disc += 1
+            continue
+
+        ean = pick_ean(product)
         if not ean:
-            skipped += 1
+            no_ean += 1
+            print(f'  [{i}/{total}] {jim_id}: sin EAN, skip')
             continue
 
         name_obj = product.get('name') or {}
@@ -167,12 +185,15 @@ def sync():
         desc_obj = product.get('description') or {}
         desc = desc_obj.get('es-ES') or desc_obj.get('en-US') or ''
 
-        price = prices.get(jim_id, '0.00')
-        stock = stocks.get(jim_id, 0)
+        price = str(product.get('price') or '0.00')
+        stock = pick_stock(product)
 
-        brand = (product.get('brand') or {}).get('name', '') if isinstance(product.get('brand'), dict) else ''
-        cat_id = str(product.get('category_id', ''))
+        brand = brands.get(str(product.get('brand_id', '')), '')
         brand_tag = brand.lower().replace(' ', '-') if brand else 'sin-marca'
+        cat_tags = [f'cat-{c}' for c in (product.get('category_ids') or [])]
+        tags = ','.join(['jimsports', f'marca-{brand_tag}'] + cat_tags)
+
+        images = [{'src': url} for url in (product.get('images') or []) if url]
 
         if ean in existing:
             info = existing[ean]
@@ -182,39 +203,41 @@ def sync():
             if info.get('inventory_item_id'):
                 set_inventory(info['inventory_item_id'], location_id, stock)
             updated += 1
+            print(f'  [{i}/{total}] {ean} {name[:50]} -> actualizado (stock {stock})')
         else:
-            images = jim_get_images(jim_id)
-            time.sleep(0.2)
             r = shopify_request('POST', 'products.json', data={
                 'product': {
                     'title': name,
                     'body_html': desc,
                     'handle': f'jimsports-{ean}',
-                    'vendor': brand,
-                    'tags': f'jimsports,marca-{brand_tag},cat-{cat_id}',
+                    'vendor': brand or 'Jim Sports',
+                    'tags': tags,
                     'images': images,
                     'variants': [{
                         'sku': ean,
+                        'barcode': ean,
                         'price': price,
-                        'inventory_management': 'shopify'
+                        'inventory_management': 'shopify',
                     }]
                 }
             })
-            if r:
-                p = r.json().get('product', {})
-                v = (p.get('variants') or [{}])[0]
+            if r and r.json().get('product'):
+                v = (r.json()['product'].get('variants') or [{}])[0]
                 if v.get('inventory_item_id'):
                     set_inventory(v['inventory_item_id'], location_id, stock)
                 created += 1
+                print(f'  [{i}/{total}] {ean} {name[:50]} -> CREADO (stock {stock})')
             else:
-                skipped += 1
-
-        if i % 25 == 0:
-            print(f'[{i}/{total}] {created} creados, {updated} actualizados, {skipped} errores')
+                errors += 1
 
         time.sleep(0.4)
 
-    print(f'FINAL: {created} creados, {updated} actualizados, {skipped} errores')
+    print(f'\n=== RESUMEN ===')
+    print(f'Creados:        {created}')
+    print(f'Actualizados:   {updated}')
+    print(f'Sin EAN:        {no_ean}')
+    print(f'Discontinuados: {disc}')
+    print(f'Errores:        {errors}')
 
 
 if __name__ == '__main__':
