@@ -63,11 +63,10 @@ def jim_request(endpoint, retries=5):
 
 
 def get_location_id():
-    r = shopify_request('GET', 'locations.json')
+    r = shopify_request('GET', 'shop.json')
     if not r:
         return None
-    locs = r.json().get('locations', [])
-    return locs[0]['id'] if locs else None
+    return r.json().get('shop', {}).get('primary_location_id')
 
 
 def fetch_existing_by_sku():
