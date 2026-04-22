@@ -26,7 +26,7 @@ def shopify_request(method, endpoint, data=None, retries=5):
         try:
             r = requests.request(method, url, headers=HEADERS_SHOPIFY, json=data, timeout=30)
             if r.status_code == 429:
-                wait = int(r.headers.get('Retry-After', 10))
+                wait = float(r.headers.get('Retry-After', 10))
                 print(f'  Rate limit Shopify, esperando {wait}s...')
                 time.sleep(wait)
                 continue
