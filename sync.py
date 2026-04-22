@@ -84,6 +84,7 @@ def fetch_existing_by_sku():
                 sku = (v.get('sku') or '').strip()
                 if sku:
                     existing[sku] = {
+                        'product_id': p['id'],
                         'variant_id': v['id'],
                         'inventory_item_id': v.get('inventory_item_id')
                     }
@@ -136,6 +137,17 @@ def pick_stock(product):
         return 0
 
 
+def build_tags(product, brand):
+    brand_tag = brand.lower().replace(' ', '-') if brand else 'sin-marca'
+    cat_tags = [f'cat-{c}' for c in (product.get('category_ids') or [])]
+    extras = []
+    if product.get('new'):
+        extras.append('novedad')
+    if product.get('outlet'):
+        extras.append('outlet')
+    return ','.join(['jimsports', f'marca-{brand_tag}'] + cat_tags + extras)
+
+
 def sync():
     print('=== Sincronizando JimSports -> Shopify ===')
 
@@ -176,7 +188,6 @@ def sync():
         ean = pick_ean(product)
         if not ean:
             no_ean += 1
-            print(f'  [{i}/{total}] {jim_id}: sin EAN, skip')
             continue
 
         name_obj = product.get('name') or {}
@@ -188,21 +199,22 @@ def sync():
         stock = pick_stock(product)
 
         brand = brands.get(str(product.get('brand_id', '')), '')
-        brand_tag = brand.lower().replace(' ', '-') if brand else 'sin-marca'
-        cat_tags = [f'cat-{c}' for c in (product.get('category_ids') or [])]
-        tags = ','.join(['jimsports', f'marca-{brand_tag}'] + cat_tags)
+        tags = build_tags(product, brand)
 
         images = [{'src': url} for url in (product.get('images') or []) if url]
 
         if ean in existing:
             info = existing[ean]
+            shopify_request('PUT', f'products/{info["product_id"]}.json', data={
+                'product': {'id': info['product_id'], 'tags': tags, 'vendor': brand or 'Jim Sports'}
+            })
             shopify_request('PUT', f'variants/{info["variant_id"]}.json', data={
                 'variant': {'id': info['variant_id'], 'price': price}
             })
             if info.get('inventory_item_id'):
                 set_inventory(info['inventory_item_id'], location_id, stock)
             updated += 1
-            print(f'  [{i}/{total}] {ean} {name[:50]} -> actualizado (stock {stock})')
+            print(f'  [{i}/{total}] {ean} {name[:50]} -> actualizado')
         else:
             r = shopify_request('POST', 'products.json', data={
                 'product': {
@@ -225,7 +237,7 @@ def sync():
                 if v.get('inventory_item_id'):
                     set_inventory(v['inventory_item_id'], location_id, stock)
                 created += 1
-                print(f'  [{i}/{total}] {ean} {name[:50]} -> CREADO (stock {stock})')
+                print(f'  [{i}/{total}] {ean} {name[:50]} -> CREADO')
             else:
                 errors += 1
 
