@@ -1,0 +1,18 @@
+name: Inspect Jim Sports prices
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: Inspect
+        env:
+          JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
+        run: python inspect.py
