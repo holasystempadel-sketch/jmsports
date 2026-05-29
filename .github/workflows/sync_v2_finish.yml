@@ -1,0 +1,48 @@
+name: JimSports Sync v2 FINISH
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync_limit:
+        description: 'Quants productes processar (0 = tots)'
+        required: true
+        default: '0'
+      debug_ref:
+        description: 'Referència per imprimir el JSON (buit per cap)'
+        required: false
+        default: ''
+      price_multiplier:
+        description: 'Multiplicador de preu PVP'
+        required: true
+        default: '2.0'
+      only_new:
+        description: 'true = salta els productes existents'
+        required: false
+        default: 'true'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run sync_v2.py
+        env:
+          JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          SYNC_LIMIT: ${{ github.event.inputs.sync_limit }}
+          DEBUG_REF: ${{ github.event.inputs.debug_ref }}
+          PRICE_MULTIPLIER: ${{ github.event.inputs.price_multiplier }}
+          ONLY_NEW: ${{ github.event.inputs.only_new }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u sync_v2.py
