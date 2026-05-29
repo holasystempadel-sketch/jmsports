@@ -1,0 +1,95 @@
+name: Bulk Set Template
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true = no aplicar'
+        required: true
+        default: 'false'
+
+jobs:
+  set-template:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Install requests
+        run: pip install requests
+
+      - name: Set templateSuffix=bulk to all jimsports products
+        env:
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          python -u <<'PYEOF'
+          import os, time, requests, json
+
+          TOKEN = os.environ['SHOPIFY_TOKEN']
+          DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() == 'true'
+          DOMAIN = 'xqksc3-ua.myshopify.com'
+          URL = f'https://{DOMAIN}/admin/api/2025-10/graphql.json'
+          HEADERS = {'X-Shopify-Access-Token': TOKEN, 'Content-Type': 'application/json'}
+
+          def gql(query, vars=None):
+              for attempt in range(5):
+                  r = requests.post(URL, headers=HEADERS, json={'query': query, 'variables': vars or {}}, timeout=30)
+                  if r.status_code == 429:
+                      time.sleep(2 ** attempt); continue
+                  if r.status_code >= 500:
+                      time.sleep(1 + attempt); continue
+                  data = r.json()
+                  if 'errors' in data:
+                      msg = json.dumps(data['errors'])
+                      if 'THROTTLED' in msg:
+                          time.sleep(2); continue
+                      raise RuntimeError(msg)
+                  return data
+              raise RuntimeError('Massa retries')
+
+          print('Carregant productes jimsports sense template bulk...')
+          products = []
+          cursor = None
+          while True:
+              q = '''query Q($c: String) { products(first: 250, query: "tag:jimsports AND -template_suffix:bulk", after: $c) { edges { node { id title } } pageInfo { hasNextPage endCursor } } }'''
+              d = gql(q, {'c': cursor})
+              page = d['data']['products']
+              for e in page['edges']:
+                  products.append(e['node'])
+              print(f'  Pàgina: total {len(products)}')
+              if not page['pageInfo']['hasNextPage']: break
+              cursor = page['pageInfo']['endCursor']
+              time.sleep(0.2)
+
+          print(f'\nTotal pendents: {len(products)}')
+          if DRY_RUN:
+              for p in products[:10]: print(f'  - {p["title"]}')
+              print('DRY_RUN -- no aplico.')
+              raise SystemExit(0)
+
+          print(f'\nAplicant templateSuffix=bulk a {len(products)} productes...\n')
+          M = '''mutation SetTpl($p: ProductUpdateInput!) { productUpdate(product: $p) { product { id } userErrors { field message } } }'''
+          ok = 0; fail = 0; start = time.time()
+          for i, p in enumerate(products, 1):
+              try:
+                  d = gql(M, {'p': {'id': p['id'], 'templateSuffix': 'bulk'}})
+                  errs = d['data']['productUpdate']['userErrors']
+                  if errs:
+                      fail += 1
+                      print(f'  [{i}/{len(products)}] FAIL {p["title"]}: {errs}')
+                  else:
+                      ok += 1
+                      if i % 50 == 0:
+                          elap = time.time() - start
+                          rate = i / elap if elap > 0 else 0
+                          eta = (len(products) - i) / rate if rate > 0 else 0
+                          print(f'  [{i}/{len(products)}] OK | {rate:.1f}/s | ETA {eta:.0f}s')
+              except Exception as e:
+                  fail += 1
+                  print(f'  [{i}/{len(products)}] FAIL {p["title"]}: {e}')
+              time.sleep(0.05)
+
+          print(f'\n=== FET ===')
+          print(f'OK:   {ok}')
+          print(f'FAIL: {fail}')
+          print(f'Time: {time.time() - start:.0f}s')
+          PYEOF
