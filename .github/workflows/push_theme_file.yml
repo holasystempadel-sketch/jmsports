@@ -1,0 +1,49 @@
+name: Push Theme File
+
+on:
+  workflow_dispatch:
+    inputs:
+      src:
+        description: 'Ruta del fitxer al repo'
+        required: true
+        default: 'theme/main-product-bulk.liquid'
+      key:
+        description: 'Ruta de desti al tema'
+        required: true
+        default: 'sections/main-product-bulk.liquid'
+      theme_id:
+        description: 'ID del tema'
+        required: true
+        default: '193637810558'
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Push file
+        env:
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          THEME_ID: ${{ github.event.inputs.theme_id }}
+          SRC: ${{ github.event.inputs.src }}
+          KEY: ${{ github.event.inputs.key }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u push_theme_file.py
+
+      - name: Upload backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-file-backup
+          path: backup_theme_file.liquid
