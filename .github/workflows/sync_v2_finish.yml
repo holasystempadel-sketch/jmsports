@@ -1,6 +1,7 @@
 name: JimSports Sync v2 FINISH
+
 on:
- schedule:
+  schedule:
     - cron: '0 2 * * *'   # cada nit a les 02:00 UTC
   workflow_dispatch:
     inputs:
@@ -41,9 +42,9 @@ jobs:
         env:
           JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
-          SYNC_LIMIT: ${{ github.event.inputs.sync_limit }}
-          DEBUG_REF: ${{ github.event.inputs.debug_ref }}
-          PRICE_MULTIPLIER: ${{ github.event.inputs.price_multiplier }}
-          ONLY_NEW: ${{ github.event.inputs.only_new }}
+          SYNC_LIMIT: ${{ github.event.inputs.sync_limit || '0' }}
+          DEBUG_REF: ${{ github.event.inputs.debug_ref || '' }}
+          PRICE_MULTIPLIER: ${{ github.event.inputs.price_multiplier || '2.0' }}
+          ONLY_NEW: ${{ github.event.inputs.only_new || 'true' }}
           PYTHONUNBUFFERED: '1'
         run: python -u sync_v2.py
