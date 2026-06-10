@@ -32,9 +32,10 @@ JIMSPORTS_API_KEY = os.environ['JIMSPORTS_API_KEY']
 SHOPIFY_TOKEN     = os.environ['SHOPIFY_TOKEN']
 SHOPIFY_STORE     = os.environ.get('SHOPIFY_STORE', 'xqksc3-ua.myshopify.com')
 API_VERSION       = os.environ.get('SHOPIFY_API_VERSION', '2025-10')
-SYNC_LIMIT        = int(os.environ.get('SYNC_LIMIT', '0'))
-PRICE_MULTIPLIER  = float(os.environ.get('PRICE_MULTIPLIER', '2.0'))
-DEBUG_REF         = os.environ.get('DEBUG_REF', '').strip()
+SYNC_LIMIT        = int(os.environ.get('SYNC_LIMIT') or '0')
+PRICE_MULTIPLIER  = float(os.environ.get('PRICE_MULTIPLIER') or '2.0')
+DEBUG_REF         = (os.environ.get('DEBUG_REF') or '').strip()
+ONLY_NEW          = (os.environ.get('ONLY_NEW') or 'true').strip().lower() == 'true'
 
 SHOPIFY_BASE = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}'
 
@@ -101,6 +102,14 @@ def pvp(raw):
         return '0.00'
 
 
+# ─── HANDLES ──────────────────────────────────────────────────────────────────
+
+def slugify(text):
+    import unicodedata
+    text = unicodedata.normalize('NFKD', text or '').encode('ascii', 'ignore').decode('ascii')
+    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')[:200]
+
+
 # ─── MAPPINGS GLOBALS ─────────────────────────────────────────────────────────
 
 def fetch_brand_map():
@@ -120,17 +129,32 @@ def fetch_attribute_value_label():
     return out
 
 
+def fetch_category_map():
+    """Retorna {category_id: 'Nom de la categoria'} en castellà."""
+    data = jim_request('categories') or []
+    out = {}
+    for c in data:
+        name_obj = c.get('name') or {}
+        name = (name_obj.get('es-ES') or name_obj.get('en-US') or '').strip()
+        if name:
+            out[c['id']] = name
+    return out
+
+
 # ─── PRODUCTES SHOPIFY EXISTENTS ──────────────────────────────────────────────
 
 def fetch_existing():
-    """Retorna {ean: {product_id, variant_id, inventory_item_id}} dels productes amb tag jimsports."""
+    """Retorna ({ean: {product_id, variant_id, inventory_item_id}}, {handles}) dels productes de la botiga."""
     existing = {}
+    handles = set()
     url = f'{SHOPIFY_BASE}/products.json?limit=250&fields=id,handle,tags,variants'
     while url:
         r = shopify_request('GET', url)
         if not r:
             break
         for p in r.json().get('products', []):
+            if p.get('handle'):
+                handles.add(p['handle'])
             tags = (p.get('tags') or '').lower()
             if 'jimsports' not in tags:
                 continue
@@ -147,7 +171,7 @@ def fetch_existing():
             if 'rel="next"' in part:
                 url = part.split(';')[0].strip().strip('<>')
                 break
-    return existing
+    return existing, handles
 
 
 # ─── INVENTARI ────────────────────────────────────────────────────────────────
@@ -203,26 +227,55 @@ def build_variants(product, attr_value_label):
         v = raw[0] if raw else product
         ean = v.get('ean13') or product.get('ean13')
         if not ean:
-            return None, 'no-ean'
+            return None, None, 'no-ean'
         return [{
             'sku': ean,
             'barcode': ean,
             'price': pvp(v.get('price') or product.get('price')),
             'inventory_management': 'shopify',
             '_stock': int(v.get('stock') or product.get('stock') or 0),
-        }], None
+        }], None, None
 
-    # Cas B: múltiples variants → opció "Variante"
-    out = []
-    seen_labels = set()
+    # Cas B: múltiples variants. Si totes les referencies tenen 2 parts
+    # (REF.COLOR.TALLA) fem opcions Color + Talla separades (filtrables);
+    # sino, una sola opció "Variante".
+    parsed = []
     for v in raw:
         ean = v.get('ean13')
         if not ean:
             continue
         label = variant_label_from_reference(v.get('reference', ''), base_ref, attr_value_label)
-        # Garantir unicitat (Shopify no permet labels duplicats)
-        original = label
-        idx = 2
+        parts = [p.strip() for p in label.split(' / ') if p.strip()]
+        parsed.append((v, ean, label, parts))
+    if not parsed:
+        return None, None, 'no-ean'
+
+    out = []
+    two_part = all(len(p[3]) == 2 for p in parsed)
+
+    if two_part:
+        seen = set()
+        for v, ean, label, parts in parsed:
+            color, talla = parts
+            original, idx = talla, 2
+            while (color, talla) in seen:
+                talla = f'{original} ({idx})'
+                idx += 1
+            seen.add((color, talla))
+            out.append({
+                'sku': ean,
+                'barcode': ean,
+                'option1': color,
+                'option2': talla,
+                'price': pvp(v.get('price') or product.get('price')),
+                'inventory_management': 'shopify',
+                '_stock': int(v.get('stock') or 0),
+            })
+        return out, ['Color', 'Talla'], None
+
+    seen_labels = set()
+    for v, ean, label, parts in parsed:
+        original, idx = label, 2
         while label in seen_labels:
             label = f'{original} ({idx})'
             idx += 1
@@ -235,9 +288,7 @@ def build_variants(product, attr_value_label):
             'inventory_management': 'shopify',
             '_stock': int(v.get('stock') or 0),
         })
-    if not out:
-        return None, 'no-ean'
-    return out, None
+    return out, ['Variante'], None
 
 
 # ─── COL·LECCIONS PER MARCA ───────────────────────────────────────────────────
@@ -289,7 +340,7 @@ def build_tags(product, brand):
 
 def sync():
     print('=== JimSports -> Shopify (v2) ===')
-    print(f'Store: {SHOPIFY_STORE}  ·  Multiplicador: x{PRICE_MULTIPLIER}  ·  Limit: {SYNC_LIMIT or "TOTS"}')
+    print(f'Store: {SHOPIFY_STORE}  ·  Multiplicador: x{PRICE_MULTIPLIER}  ·  Limit: {SYNC_LIMIT or "TOTS"}  ·  ONLY_NEW: {ONLY_NEW}')
 
     location_id = get_location_id()
     if not location_id:
@@ -303,7 +354,10 @@ def sync():
     attr_value_label = fetch_attribute_value_label()
     print(f'{len(attr_value_label)} valors d\'atribut carregats (Talla, Color, ...)')
 
-    existing = fetch_existing()
+    cats_map = fetch_category_map()
+    print(f'{len(cats_map)} categories carregades')
+
+    existing, existing_handles = fetch_existing()
     print(f'{len(existing)} variants existents a Shopify amb tag jimsports')
 
     jim_ids = jim_request('products') or []
@@ -340,25 +394,40 @@ def sync():
         tags = build_tags(product, brand)
         images = [{'src': u} for u in (product.get('images') or []) if u]
 
-        variants, err = build_variants(product, attr_value_label)
+        variants, option_names, err = build_variants(product, attr_value_label)
         if err == 'no-ean':
             skipped += 1
             print(f'  [{i}/{total}] {ref} SENSE EAN, skip')
             continue
 
+        # Tipo de producto = nom de la categoria (filtre natiu de Shopify)
+        product_type = ''
+        for cid in (product.get('category_ids') or []):
+            if cats_map.get(cid):
+                product_type = cats_map[cid]
+                break
+
         has_variants = len(variants) > 1
 
-        # Construïm el payload Shopify
+        # Productes sense preu a l'API = "consultar precio" a Jim Sports
+        try:
+            if variants and all(float(v.get('price') or 0) == 0 for v in variants):
+                tags = tags + ',consultar-precio'
+        except (TypeError, ValueError):
+            pass
+
+        # Construïm el payload Shopify (el handle es calcula nomes en crear)
         product_payload = {
             'title': name,
             'body_html': desc,
-            'handle': f'jimsports-{ref}',
             'vendor': brand or 'Jim Sports',
+            'product_type': product_type,
             'tags': tags,
             'images': images,
+            'template_suffix': 'bulk',
         }
         if has_variants:
-            product_payload['options'] = [{'name': 'Variante'}]
+            product_payload['options'] = [{'name': n} for n in (option_names or ['Variante'])]
         product_payload['variants'] = [
             {k: v for k, v in vd.items() if not k.startswith('_')}
             for vd in variants
@@ -369,12 +438,17 @@ def sync():
         info = existing.get(primary_sku)
 
         if info:
+            if ONLY_NEW:
+                skipped += 1
+                continue
             # Actualitzem només els camps que canvien fàcilment (tags, vendor, preus, stock)
             shopify_request('PUT', f'products/{info["product_id"]}.json', data={
                 'product': {
                     'id': info['product_id'],
                     'tags': tags,
                     'vendor': brand or 'Jim Sports',
+                    'product_type': product_type,
+                    'template_suffix': 'bulk',
                 },
             })
             # Per a productes simples actualitzem variant amb el SKU primary
@@ -389,6 +463,16 @@ def sync():
             updated += 1
             print(f'  [{i}/{total}] {ref} {name[:40]} -> actualitzat')
         else:
+            # Handle net a partir del títol (sense prefix jimsports-)
+            handle = slugify(name) or f'producto-{slugify(ref)}'
+            if handle in existing_handles:
+                handle = f'{handle}-{slugify(ref)}'
+            base_handle, n = handle, 2
+            while handle in existing_handles:
+                handle = f'{base_handle}-{n}'
+                n += 1
+            existing_handles.add(handle)
+            product_payload['handle'] = handle
             r = shopify_request('POST', 'products.json', data={'product': product_payload})
             if r and r.json().get('product'):
                 created_p = r.json()['product']
