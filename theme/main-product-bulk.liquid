@@ -1,0 +1,496 @@
+{%- comment -%}
+  main-product-bulk.liquid
+  -------------------------------------------
+  Pàgina de producte estil Jim Sports per Systempadel.
+  Mostra:
+    - Galeria d'imatges (esquerra)
+    - Títol, preu, info lateral (Referencia, Stock, Marca, País)
+    - Botons "Descargar características" i "Descargar imágenes"
+    - Descripció completa
+    - TAULA matrix de variants amb input de quantitat per cada variant
+    - Botó "AÑADIR AL CARRITO" que afegeix totes les quantitats > 0 alhora
+{%- endcomment -%}
+
+{%- liquid
+  assign total_stock = 0
+  for variant in product.variants
+    assign total_stock = total_stock | plus: variant.inventory_quantity
+  endfor
+
+  assign product_ref = product.metafields.custom.reference | default: product.handle | replace: 'jimsports-', '' | upcase
+  assign origin = product.metafields.custom.origin_country | default: ''
+-%}
+
+<section class="systempadel-product" data-section-id="{{ section.id }}">
+  <div class="systempadel-product__container">
+
+    {%- comment -%} ─── BREADCRUMBS ─── {%- endcomment -%}
+    <nav class="systempadel-product__breadcrumbs">
+      <a href="/">INICIO</a>
+      {%- if collection -%}
+        <span>›</span>
+        <a href="{{ collection.url }}">{{ collection.title | upcase }}</a>
+      {%- endif -%}
+      <span>›</span>
+      <span>{{ product.title | upcase }}</span>
+    </nav>
+
+    {%- comment -%} ─── PART SUPERIOR: GALERIA + INFO LATERAL ─── {%- endcomment -%}
+    <div class="systempadel-product__top">
+
+      {%- comment -%} GALERIA D'IMATGES {%- endcomment -%}
+      <div class="systempadel-product__gallery">
+        {%- if product.media.size > 0 -%}
+          <div class="systempadel-product__main-image">
+            <img id="systempadel-main-image"
+                 src="{{ product.featured_image | image_url: width: 800 }}"
+                 alt="{{ product.title | escape }}"
+                 width="800" height="800">
+          </div>
+          {%- if product.media.size > 1 -%}
+            <div class="systempadel-product__thumbnails">
+              {%- for media in product.media -%}
+                <button class="systempadel-product__thumb"
+                        data-image="{{ media | image_url: width: 800 }}"
+                        type="button"
+                        aria-label="Veure imatge {{ forloop.index }}">
+                  <img src="{{ media | image_url: width: 200 }}"
+                       alt="" width="120" height="120" loading="lazy">
+                </button>
+              {%- endfor -%}
+            </div>
+          {%- endif -%}
+        {%- endif -%}
+      </div>
+
+      {%- comment -%} INFO LATERAL {%- endcomment -%}
+      <div class="systempadel-product__info">
+        <h1 class="systempadel-product__title">{{ product.title }}</h1>
+
+        {%- assign consultar = false -%}
+        {%- if product.price == 0 or product.tags contains 'consultar-precio' -%}
+          {%- assign consultar = true -%}
+        {%- endif -%}
+
+        <div class="systempadel-product__price">
+          {%- if consultar -%}
+            <strong>Consultar precio</strong>
+          {%- elsif product.price_varies -%}
+            <strong>{{ product.price_min | money }} - {{ product.price_max | money }}</strong>
+          {%- else -%}
+            <strong>{{ product.price | money }}</strong>
+          {%- endif -%}
+          {%- unless consultar -%}
+          <span class="systempadel-product__price-note">IVA incluido</span>
+          {%- endunless -%}
+        </div>
+
+        {%- if product.variants.size > 1 and consultar == false -%}
+          <div class="systempadel-product__hint">
+            <span aria-hidden="true">ⓘ</span> Indique en la tabla las cantidades a comprar
+          </div>
+        {%- endif -%}
+
+        <table class="systempadel-product__attrs">
+          <tr>
+            <th>Referencia</th>
+            <td>{{ product_ref }}</td>
+          </tr>
+          <tr>
+            <th>Stock</th>
+            <td>{{ total_stock }} ud(s).</td>
+          </tr>
+          {%- if product.vendor != blank -%}
+          <tr>
+            <th>Marca</th>
+            <td>{{ product.vendor }}</td>
+          </tr>
+          {%- endif -%}
+          {%- if origin != blank -%}
+          <tr>
+            <th>País de origen</th>
+            <td>{{ origin }}</td>
+          </tr>
+          {%- endif -%}
+        </table>
+
+        <div class="systempadel-product__actions">
+          {%- if product.metafields.custom.datasheet_pdf -%}
+            <a class="systempadel-btn systempadel-btn--outline"
+               href="{{ product.metafields.custom.datasheet_pdf }}"
+               target="_blank" rel="noopener">
+              📄 Descargar características
+            </a>
+          {%- endif -%}
+          {%- if product.images.size > 0 -%}
+            <a class="systempadel-btn systempadel-btn--outline"
+               href="{{ product.featured_image | image_url: width: 2000 }}"
+               download
+               target="_blank">
+              🖼️ Descargar imágenes
+            </a>
+          {%- endif -%}
+        </div>
+      </div>
+    </div>
+
+    {%- comment -%} ─── DESCRIPCIÓ ─── {%- endcomment -%}
+    {%- if product.description != blank -%}
+      <div class="systempadel-product__description">
+        {{ product.description }}
+      </div>
+    {%- endif -%}
+
+    {%- comment -%} ─── TAULA MATRIX DE VARIANTS ─── {%- endcomment -%}
+    {%- if consultar -%}
+      <div class="systempadel-product__simple">
+        <p>Este producto está disponible bajo consulta. Solicítanos precio y disponibilidad sin compromiso.</p>
+        <a class="systempadel-btn systempadel-btn--primary" href="/pages/contact">Consultar precio</a>
+      </div>
+    {%- elsif product.variants.size > 1 -%}
+      <div class="systempadel-product__matrix-wrapper">
+        <h2 class="systempadel-product__matrix-title">Seleccione cantidades por talla/color</h2>
+
+        <form id="systempadel-bulk-form" data-product-id="{{ product.id }}">
+          <div class="systempadel-product__matrix-scroll">
+          <table class="systempadel-product__matrix">
+            <thead>
+              <tr>
+                {%- if product.options_with_values.size > 1 -%}
+                  <th>Color</th>
+                  <th>Talla</th>
+                {%- else -%}
+                  <th>{{ product.options_with_values[0].name }}</th>
+                {%- endif -%}
+                <th>Precio</th>
+                <th>Cantidad</th>
+                <th>Stock</th>
+                <th>Referencia</th>
+                <th>EAN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {%- for variant in product.variants -%}
+                <tr>
+                  {%- if product.options_with_values.size > 1 -%}
+                    <td>{{ variant.option1 }}</td>
+                    <td>{{ variant.option2 }}</td>
+                  {%- else -%}
+                    <td>{{ variant.option1 }}</td>
+                  {%- endif -%}
+                  <td>{{ variant.price | money }}</td>
+                  <td>
+                    <input type="number"
+                           name="variant_{{ variant.id }}"
+                           data-variant-id="{{ variant.id }}"
+                           data-max="{{ variant.inventory_quantity }}"
+                           min="0"
+                           max="{{ variant.inventory_quantity }}"
+                           value="0"
+                           class="systempadel-product__qty-input"
+                           {%- unless variant.available %} disabled aria-disabled="true"{% endunless -%}>
+                  </td>
+                  <td>
+                    {%- if variant.available -%}
+                      {{ variant.inventory_quantity }} uds
+                    {%- else -%}
+                      <span class="systempadel-product__sold-out">Agotado</span>
+                    {%- endif -%}
+                  </td>
+                  <td>{{ variant.sku }}</td>
+                  <td>{{ variant.barcode }}</td>
+                </tr>
+              {%- endfor -%}
+            </tbody>
+          </table>
+          </div>
+
+          <div class="systempadel-product__matrix-footer">
+            <div class="systempadel-product__totals">
+              <span>Total artículos: <strong id="systempadel-total-qty">0</strong></span>
+              <span>Total importe: <strong id="systempadel-total-amount">{{ 0 | money }}</strong></span>
+            </div>
+            <button type="submit"
+                    class="systempadel-btn systempadel-btn--primary"
+                    id="systempadel-add-to-cart-btn"
+                    disabled>
+              🛒 AÑADIR AL CARRITO
+            </button>
+          </div>
+
+          <div id="systempadel-bulk-msg" class="systempadel-product__msg" role="status" aria-live="polite"></div>
+        </form>
+      </div>
+    {%- else -%}
+      {%- comment -%} Producte simple, una sola variant {%- endcomment -%}
+      <div class="systempadel-product__simple">
+        <form action="/cart/add" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+          <label>Cantidad:
+            <input type="number" name="quantity" min="1" value="1" max="{{ product.selected_or_first_available_variant.inventory_quantity }}">
+          </label>
+          <button type="submit" class="systempadel-btn systempadel-btn--primary">🛒 AÑADIR AL CARRITO</button>
+        </form>
+      </div>
+    {%- endif -%}
+
+  </div>
+</section>
+
+{%- comment -%} ─── JAVASCRIPT ─── {%- endcomment -%}
+<script>
+(function() {
+  'use strict';
+
+  // ─── Galeria d'imatges ───
+  const mainImg = document.getElementById('systempadel-main-image');
+  document.querySelectorAll('.systempadel-product__thumb').forEach(thumb => {
+    thumb.addEventListener('click', () => {
+      const newSrc = thumb.dataset.image;
+      if (newSrc && mainImg) mainImg.src = newSrc;
+    });
+  });
+
+  // ─── Matrix bulk order ───
+  const form = document.getElementById('systempadel-bulk-form');
+  if (!form) return;
+
+  const totalQtyEl = document.getElementById('systempadel-total-qty');
+  const totalAmtEl = document.getElementById('systempadel-total-amount');
+  const submitBtn = document.getElementById('systempadel-add-to-cart-btn');
+  const msgEl = document.getElementById('systempadel-bulk-msg');
+
+  // Preus per variant (en cèntims, pel format Shopify)
+  const variantPrices = {
+    {%- for variant in product.variants -%}
+      "{{ variant.id }}": {{ variant.price }}{%- unless forloop.last %},{% endunless -%}
+    {%- endfor -%}
+  };
+
+  const moneyFormat = '{{ shop.money_format | replace: "''", "\\''" }}';
+  function formatMoney(cents) {
+    const value = (cents / 100).toFixed(2);
+    return moneyFormat.replace(/\{\{\s*amount\s*\}\}/g, value)
+                      .replace(/\{\{\s*amount_no_decimals\s*\}\}/g, Math.round(cents/100))
+                      .replace(/\{\{[^}]+\}\}/g, value);
+  }
+
+  function recalc() {
+    let totalQty = 0, totalCents = 0;
+    document.querySelectorAll('.systempadel-product__qty-input').forEach(inp => {
+      const q = parseInt(inp.value, 10) || 0;
+      const vid = inp.dataset.variantId;
+      totalQty += q;
+      totalCents += q * (variantPrices[vid] || 0);
+    });
+    if (totalQtyEl) totalQtyEl.textContent = totalQty;
+    if (totalAmtEl) totalAmtEl.textContent = formatMoney(totalCents);
+    if (submitBtn) submitBtn.disabled = totalQty < 1;
+  }
+
+  document.querySelectorAll('.systempadel-product__qty-input').forEach(inp => {
+    inp.addEventListener('input', recalc);
+    inp.addEventListener('change', recalc);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '⏳ Añadiendo...'; }
+    if (msgEl) msgEl.textContent = '';
+
+    const items = [];
+    document.querySelectorAll('.systempadel-product__qty-input').forEach(inp => {
+      const q = parseInt(inp.value, 10) || 0;
+      if (q > 0) {
+        items.push({ id: parseInt(inp.dataset.variantId, 10), quantity: q });
+      }
+    });
+
+    if (items.length === 0) {
+      if (msgEl) msgEl.textContent = 'Selecciona al menos una cantidad.';
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '🛒 AÑADIR AL CARRITO'; }
+      return;
+    }
+
+    try {
+      const resp = await fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ items })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.description || err.message || 'Error desconocido');
+      }
+      if (msgEl) {
+        msgEl.textContent = '✓ Añadido al carrito. Redirigiendo...';
+        msgEl.style.color = 'green';
+      }
+      setTimeout(() => { window.location.href = '/cart'; }, 600);
+    } catch (err) {
+      if (msgEl) {
+        msgEl.textContent = '✗ Error: ' + err.message;
+        msgEl.style.color = 'red';
+      }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '🛒 AÑADIR AL CARRITO'; }
+    }
+  });
+
+  recalc();
+})();
+</script>
+
+{%- comment -%} ─── ESTILS (adaptats al tema fosc Systempadel) ─── {%- endcomment -%}
+<style>
+  .systempadel-product {
+    --sp-bg: #ffffff;
+    --sp-bg-alt: #f5f7fa;
+    --sp-border: #d8dde2;
+    --sp-text: #1a1a1a;
+    --sp-text-muted: #5a6470;
+    --sp-accent: #8bc34a;
+    --sp-accent-hover: #7cb342;
+    --sp-danger: #e74c3c;
+    --sp-input-bg: #2a5a72;
+    padding: 24px 0;
+    background: #f0f3f6;
+    color: var(--sp-text);
+  }
+  .systempadel-product * { box-sizing: border-box; }
+  .systempadel-product__container {
+    max-width: 100%; margin: 0 auto; padding: 0 24px;
+    font-family: var(--font-body-family, system-ui), sans-serif;
+    color: var(--sp-text);
+  }
+  .systempadel-product__breadcrumbs { font-size: 12px; color: var(--sp-text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .systempadel-product__breadcrumbs a { color: var(--sp-text-muted); text-decoration: none; }
+  .systempadel-product__breadcrumbs a:hover { text-decoration: underline; color: var(--sp-text); }
+  .systempadel-product__breadcrumbs span { margin: 0 6px; }
+
+  .systempadel-product__top {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) 1.4fr;
+    gap: 40px;
+    margin-bottom: 24px;
+    background: var(--sp-bg);
+    padding: 28px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  @media (max-width: 768px) { .systempadel-product__top { grid-template-columns: 1fr; padding: 16px; } }
+
+  .systempadel-product__main-image img {
+    width: 100%; height: auto; max-width: 500px; display: block; margin: 0 auto;
+    border-radius: 6px;
+  }
+  .systempadel-product__thumbnails {
+    display: flex; gap: 8px; margin-top: 16px; overflow-x: auto; padding-bottom: 8px;
+  }
+  .systempadel-product__thumb {
+    flex: 0 0 80px; height: 80px; padding: 0;
+    border: 1px solid var(--sp-border); background: var(--sp-bg); cursor: pointer;
+    transition: border-color .15s; border-radius: 4px; overflow: hidden;
+  }
+  .systempadel-product__thumb:hover { border-color: var(--sp-text); }
+  .systempadel-product__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .systempadel-product__title {
+    font-size: 28px; line-height: 1.2; margin: 0 0 16px; font-weight: 700;
+    text-transform: uppercase; color: var(--sp-text);
+  }
+  .systempadel-product__price { font-size: 26px; margin-bottom: 8px; font-weight: 700; color: var(--sp-text); }
+  .systempadel-product__price-note { font-size: 13px; color: var(--sp-text-muted); margin-left: 8px; font-weight: 400; }
+  .systempadel-product__hint {
+    background: var(--sp-bg-alt); border-left: 3px solid var(--sp-accent);
+    padding: 10px 14px; font-size: 13px; margin: 12px 0 20px;
+    color: var(--sp-text); border-radius: 4px;
+  }
+  .systempadel-product__attrs {
+    width: 100%; border-collapse: collapse; margin-bottom: 20px;
+    background: var(--sp-bg);
+  }
+  .systempadel-product__attrs th, .systempadel-product__attrs td {
+    padding: 12px 14px; border-bottom: 1px solid var(--sp-border); text-align: left; font-size: 14px;
+    color: var(--sp-text);
+  }
+  .systempadel-product__attrs th {
+    font-weight: 700; width: 40%; background: var(--sp-bg-alt);
+    text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px;
+  }
+
+  .systempadel-product__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+  .systempadel-btn {
+    display: inline-block; padding: 10px 18px; border: 1px solid var(--sp-text);
+    background: var(--sp-bg); color: var(--sp-text); cursor: pointer; font-size: 13px;
+    text-decoration: none; border-radius: 4px; transition: all .15s; font-weight: 600;
+  }
+  .systempadel-btn:hover { background: var(--sp-text); color: var(--sp-bg); }
+  .systempadel-btn--primary {
+    background: var(--sp-accent); color: #fff; border-color: var(--sp-accent);
+    font-size: 16px; font-weight: 700; padding: 14px 28px; letter-spacing: 0.5px;
+  }
+  .systempadel-btn--primary:hover { background: var(--sp-accent-hover); border-color: var(--sp-accent-hover); color: #fff; }
+  .systempadel-btn--primary:disabled { background: #c5cad0; border-color: #c5cad0; cursor: not-allowed; color: #fff; opacity: 0.6; }
+
+  .systempadel-product__description {
+    max-width: 100%; margin: 0 0 24px; font-size: 15px; line-height: 1.6;
+    background: var(--sp-bg); color: var(--sp-text); padding: 24px 28px; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+
+  .systempadel-product__matrix-wrapper {
+    margin: 0 0 24px; background: var(--sp-bg); padding: 28px; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .systempadel-product__matrix-title {
+    font-size: 18px; padding-bottom: 10px; border-bottom: 2px solid var(--sp-text);
+    margin: 0 0 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--sp-text);
+  }
+  .systempadel-product__matrix-scroll { overflow-x: auto; }
+  .systempadel-product__matrix {
+    width: 100%; border-collapse: collapse; font-size: 14px;
+    background: var(--sp-bg); color: var(--sp-text); min-width: 720px;
+  }
+  .systempadel-product__matrix th, .systempadel-product__matrix td {
+    padding: 12px 10px; border: 1px solid var(--sp-border); text-align: center;
+    color: var(--sp-text);
+  }
+  .systempadel-product__matrix th {
+    background: var(--sp-text); color: var(--sp-bg); font-weight: 700;
+    text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;
+  }
+  .systempadel-product__matrix tbody tr:nth-child(even) { background: var(--sp-bg-alt); }
+  .systempadel-product__matrix tbody tr:hover { background: #eef4f8; }
+  .systempadel-product__qty-input {
+    width: 70px; padding: 8px 6px; text-align: center;
+    border: 2px solid var(--sp-input-bg); background: var(--sp-input-bg); color: #fff;
+    font-weight: 700; border-radius: 4px; font-size: 15px;
+  }
+  .systempadel-product__qty-input:disabled {
+    background: #c5cad0; border-color: #c5cad0; color: #fff; opacity: 0.5;
+  }
+  .systempadel-product__sold-out { color: var(--sp-danger); font-weight: 700; font-size: 12px; text-transform: uppercase; }
+  .systempadel-product__matrix-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 0 4px; flex-wrap: wrap; gap: 12px;
+    border-top: 1px solid var(--sp-border); margin-top: 16px;
+  }
+  .systempadel-product__totals { display: flex; gap: 24px; font-size: 15px; color: var(--sp-text); }
+  .systempadel-product__totals strong { color: var(--sp-accent); font-size: 18px; }
+  .systempadel-product__msg { padding: 12px 0; font-size: 14px; color: var(--sp-text); }
+  .systempadel-product__simple { margin: 32px 0; background: var(--sp-bg); padding: 20px; border-radius: 6px; color: var(--sp-text); }
+</style>
+
+{% schema %}
+{
+  "name": "Producto matrix",
+  "tag": "section",
+  "class": "section-main-product-bulk",
+  "settings": [],
+  "presets": [
+    { "name": "Producto matrix" }
+  ]
+}
+{% endschema %}
