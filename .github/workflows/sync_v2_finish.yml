@@ -1,12 +1,7 @@
 name: JimSports Sync v2 FINISH
 on:
-  schedule:
+ schedule:
     - cron: '0 2 * * *'   # cada nit a les 02:00 UTC
-  workflow_dispatch:
-    inputs:
-      sync_limit: ...
-      ...
-on:
   workflow_dispatch:
     inputs:
       sync_limit:
