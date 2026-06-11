@@ -1,6 +1,9 @@
 name: JimSports Sync v2 FINISH
 
 on:
+  push:
+    paths:
+      - 'TRIGGER_SYNC_NOW.txt'
   schedule:
     - cron: '0 2 * * *'   # cada nit a les 02:00 UTC
   workflow_dispatch:
@@ -10,7 +13,7 @@ on:
         required: true
         default: '0'
       debug_ref:
-        description: 'Referència per imprimir el JSON (buit per cap)'
+        description: 'Referencia per imprimir el JSON (buit per cap)'
         required: false
         default: ''
       price_multiplier:
@@ -20,7 +23,7 @@ on:
       only_new:
         description: 'true = salta els productes existents'
         required: false
-        default: 'true'
+        default: 'false'
 
 jobs:
   sync:
@@ -45,6 +48,6 @@ jobs:
           SYNC_LIMIT: ${{ github.event.inputs.sync_limit || '0' }}
           DEBUG_REF: ${{ github.event.inputs.debug_ref || '' }}
           PRICE_MULTIPLIER: ${{ github.event.inputs.price_multiplier || '2.0' }}
-          ONLY_NEW: ${{ github.event.inputs.only_new || 'true' }}
+          ONLY_NEW: ${{ github.event.inputs.only_new || 'false' }}
           PYTHONUNBUFFERED: '1'
         run: python -u sync_v2.py
