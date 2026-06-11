@@ -1,0 +1,1 @@
+touch per disparar el sync complet (only_new=false). Modifica aquest fitxer per tornar-lo a llançar.
