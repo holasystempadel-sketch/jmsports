@@ -1,0 +1,22 @@
+name: Diagnostico Variantes
+on:
+  workflow_dispatch:
+    inputs:
+      sample_products:
+        description: 'Quants productes multi-variant mostrar'
+        required: false
+        default: '12'
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: Run diagnostic
+        env:
+          JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
+          SAMPLE_PRODUCTS: ${{ github.event.inputs.sample_products }}
+        run: python diag_variants.py
