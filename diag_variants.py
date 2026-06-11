@@ -63,6 +63,7 @@ print('3) Productes amb múltiples variants (mostra)')
 print('=' * 70)
 ids = jim('products') or []
 shown = 0
+dumped = 0
 for pid in ids:
     if shown >= SAMPLE_PRODUCTS:
         break
@@ -72,6 +73,14 @@ for pid in ids:
     variants = [v for v in (p.get('variants') or []) if not v.get('discontinued')]
     if len(variants) <= 1:
         continue
+    # bolca el JSON SENCER dels 2 primers productes multi-variant per veure l'estructura
+    if dumped < 2:
+        print('\n##### RAW PRODUCT JSON #####')
+        print('  product keys:', list(p.keys()))
+        print('  variant[0] keys:', list(variants[0].keys()))
+        print(json.dumps(p, ensure_ascii=False)[:4500])
+        print('##### /RAW #####')
+        dumped += 1
     base = p.get('reference', '')
     nm = name_of(p)
     print(f'\n--- {base}  "{nm[:50]}"  ({len(variants)} variants) ---')
