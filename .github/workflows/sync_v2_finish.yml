@@ -1,11 +1,8 @@
 name: JimSports Sync v2 FINISH
 
 on:
-  push:
-    paths:
-      - 'TRIGGER_SYNC_NOW.txt'
   schedule:
-    - cron: '0 2 * * *'   # cada nit a les 02:00 UTC
+    - cron: '0 2 * * *'   # cada nit a les 02:00 UTC (passada completa: crea nous + actualitza preus/stock)
   workflow_dispatch:
     inputs:
       sync_limit:
