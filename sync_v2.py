@@ -217,7 +217,7 @@ def variant_label_from_reference(ref, base_ref, attr_value_label):
     return ' / '.join(labels) if labels else ref
 
 
-def build_variants(product, attr_value_label):
+def build_variants(product, attr_value_label, talla_label='Talla'):
     """Construeix la llista de variants a passar a Shopify."""
     base_ref = product.get('reference', '')
     raw = [v for v in (product.get('variants') or []) if not v.get('discontinued')]
@@ -271,7 +271,7 @@ def build_variants(product, attr_value_label):
                 'inventory_management': 'shopify',
                 '_stock': int(v.get('stock') or 0),
             })
-        return out, ['Color', 'Talla'], None
+        return out, ['Color', talla_label], None
 
     seen_labels = set()
     for v, ean, label, parts in parsed:
@@ -394,7 +394,11 @@ def sync():
         tags = build_tags(product, brand)
         images = [{'src': u} for u in (product.get('images') or []) if u]
 
-        variants, option_names, err = build_variants(product, attr_value_label)
+        cat_names = [cats_map.get(cid, '') for cid in (product.get('category_ids') or [])]
+        name_low = (name or '').lower()
+        is_calzado = any('calzado' in (c or '').lower() for c in cat_names) or any(w in name_low for w in ('zapatilla', 'calzado', 'sandalia', 'chancla', 'bamba'))
+        talla_label = 'Talla calzado' if is_calzado else 'Talla textil'
+        variants, option_names, err = build_variants(product, attr_value_label, talla_label)
         if err == 'no-ean':
             skipped += 1
             print(f'  [{i}/{total}] {ref} SENSE EAN, skip')
