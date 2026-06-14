@@ -455,17 +455,18 @@ def sync():
                     'template_suffix': 'bulk',
                 },
             })
-            # Per a productes simples actualitzem variant amb el SKU primary
-            shopify_request('PUT', f'variants/{info["variant_id"]}.json', data={
-                'variant': {
-                    'id': info['variant_id'],
-                    'price': variants[0]['price'],
-                },
-            })
-            if info.get('inventory_item_id'):
-                set_inventory(info['inventory_item_id'], location_id, variants[0]['_stock'])
+            # Actualitzem preu + stock de TOTES les variants (per SKU/EAN), no nomes la primera
+            for vd in variants:
+                ex = existing.get(vd['sku'])
+                if not ex:
+                    continue
+                shopify_request('PUT', f'variants/{ex["variant_id"]}.json', data={
+                    'variant': {'id': ex['variant_id'], 'price': vd['price']},
+                })
+                if ex.get('inventory_item_id'):
+                    set_inventory(ex['inventory_item_id'], location_id, vd['_stock'])
             updated += 1
-            print(f'  [{i}/{total}] {ref} {name[:40]} -> actualitzat')
+            print(f'  [{i}/{total}] {ref} {name[:40]} -> actualitzat ({len(variants)} variants)')
         else:
             # Handle net a partir del títol (sense prefix jimsports-)
             handle = slugify(name) or f'producto-{slugify(ref)}'
