@@ -1,26 +1,18 @@
 import os, requests, json
 KEY=os.environ['JIMSPORTS_API_KEY']
-H={'ClientAuth':KEY,'Accept':'application/json','User-Agent':'SP/flag'}
+H={'ClientAuth':KEY,'Accept':'application/json','User-Agent':'SP/ean'}
 def g(ep):
-    return requests.get('https://api.jimsports.com/v1/'+ep,headers=H,timeout=30).json()
-def info(p):
-    nm=(p.get('name') or {}).get('es-ES') or ''
-    return dict(ref=p.get('reference'), name=nm[:42], web=p.get('web'), on_demand=p.get('on_demand'), disc=p.get('discontinued'), stock=p.get('stock'), cats=p.get('category_ids'))
-for ref in ['A005504','A006647']:
-    print('KNOWN', json.dumps(info(g('product/byref/'+ref)), ensure_ascii=False))
-feed=g('products')
-print('feed len', len(feed))
-found=0; it=0
-for pid in reversed(feed):
-    it+=1
-    if it>800: break
+    r=requests.get('https://api.jimsports.com/v1/'+ep,headers=H,timeout=30)
+    return r.status_code, r.text
+def web(ref):
+    sc,t=g('product/byref/'+ref)
     try:
-        p=g('product/'+str(pid))
+        p=json.loads(t); return dict(ref=ref, web=p.get('web'), on_demand=p.get('on_demand'), disc=p.get('discontinued'))
     except Exception:
-        continue
-    nm=(p.get('name') or {}).get('es-ES') or ''
-    if 'GLOBAL' in nm.upper():
-        print('GLOBAL', json.dumps(info(p), ensure_ascii=False))
-        found+=1
-        if found>=6: break
-print('done it=',it,'found=',found)
+        return (sc, t[:100])
+print('KNOWN A005504', web('A005504'))
+print('KNOWN A006647', web('A006647'))
+for ean in ['8445090162016','8445090160760']:
+    for ep in ['product/byean/'+ean,'product/byean13/'+ean,'products?ean13='+ean,'product/ean/'+ean]:
+        sc,t=g(ep)
+        print(ep, sc, t[:120].replace(chr(10),' '))
