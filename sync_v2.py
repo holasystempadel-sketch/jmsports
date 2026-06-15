@@ -226,11 +226,12 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
     if len(raw) <= 1:
         v = raw[0] if raw else product
         ean = v.get('ean13') or product.get('ean13')
-        if not ean:
+        sku = ean or v.get('reference') or product.get('reference')
+        if not sku:
             return None, None, 'no-ean'
         return [{
-            'sku': ean,
-            'barcode': ean,
+            'sku': sku,
+            'barcode': ean or '',
             'price': pvp(v.get('price') or product.get('price')),
             'inventory_management': 'shopify',
             '_stock': int(v.get('stock') or product.get('stock') or 0),
@@ -242,20 +243,21 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
     parsed = []
     for v in raw:
         ean = v.get('ean13')
-        if not ean:
+        sku = ean or v.get('reference')
+        if not sku:
             continue
         label = variant_label_from_reference(v.get('reference', ''), base_ref, attr_value_label)
         parts = [p.strip() for p in label.split(' / ') if p.strip()]
-        parsed.append((v, ean, label, parts))
+        parsed.append((v, sku, ean, label, parts))
     if not parsed:
         return None, None, 'no-ean'
 
     out = []
-    two_part = all(len(p[3]) == 2 for p in parsed)
+    two_part = all(len(p[4]) == 2 for p in parsed)
 
     if two_part:
         seen = set()
-        for v, ean, label, parts in parsed:
+        for v, sku, ean, label, parts in parsed:
             color, talla = parts
             original, idx = talla, 2
             while (color, talla) in seen:
@@ -263,8 +265,8 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
                 idx += 1
             seen.add((color, talla))
             out.append({
-                'sku': ean,
-                'barcode': ean,
+                'sku': sku,
+                'barcode': ean or '',
                 'option1': color,
                 'option2': talla,
                 'price': pvp(v.get('price') or product.get('price')),
@@ -274,15 +276,15 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
         return out, ['Color', talla_label], None
 
     seen_labels = set()
-    for v, ean, label, parts in parsed:
+    for v, sku, ean, label, parts in parsed:
         original, idx = label, 2
         while label in seen_labels:
             label = f'{original} ({idx})'
             idx += 1
         seen_labels.add(label)
         out.append({
-            'sku': ean,
-            'barcode': ean,
+            'sku': sku,
+            'barcode': ean or '',
             'option1': label,
             'price': pvp(v.get('price') or product.get('price')),
             'inventory_management': 'shopify',
@@ -383,6 +385,10 @@ def sync():
             print('=== /DEBUG ===\n')
 
         if product.get('discontinued'):
+            skipped += 1
+            continue
+
+        if not product.get('web'):
             skipped += 1
             continue
 
