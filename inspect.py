@@ -1,18 +1,22 @@
-import os, requests, json
+import os, requests, json, collections
 KEY=os.environ['JIMSPORTS_API_KEY']
-H={'ClientAuth':KEY,'Accept':'application/json','User-Agent':'SP/ean'}
+H={'ClientAuth':KEY,'Accept':'application/json','User-Agent':'SP/webcount'}
 def g(ep):
-    r=requests.get('https://api.jimsports.com/v1/'+ep,headers=H,timeout=30)
-    return r.status_code, r.text
-def web(ref):
-    sc,t=g('product/byref/'+ref)
+    return requests.get('https://api.jimsports.com/v1/'+ep,headers=H,timeout=30).json()
+feed=g('products')
+print('feed total', len(feed))
+cnt=collections.Counter(); falses=[]
+N=150
+for pid in feed[:N]:
     try:
-        p=json.loads(t); return dict(ref=ref, web=p.get('web'), on_demand=p.get('on_demand'), disc=p.get('discontinued'))
+        p=g('product/'+str(pid))
     except Exception:
-        return (sc, t[:100])
-print('KNOWN A005504', web('A005504'))
-print('KNOWN A006647', web('A006647'))
-for ean in ['8445090162016','8445090160760']:
-    for ep in ['product/byean/'+ean,'product/byean13/'+ean,'products?ean13='+ean,'product/ean/'+ean]:
-        sc,t=g(ep)
-        print(ep, sc, t[:120].replace(chr(10),' '))
+        continue
+    w=bool(p.get('web')); d=bool(p.get('discontinued'))
+    cnt[(w,d)]+=1
+    if not w:
+        nm=(p.get('name') or {}).get('es-ES') or ''
+        falses.append(nm[:42])
+print('sample N=',N,' counts (web,disc):', dict(cnt))
+print('web-false count in sample:', len(falses))
+print('web-false names:', falses[:20])
