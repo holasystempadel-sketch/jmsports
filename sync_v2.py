@@ -38,6 +38,8 @@ DEBUG_REF         = (os.environ.get('DEBUG_REF') or '').strip()
 ONLY_NEW          = (os.environ.get('ONLY_NEW') or 'true').strip().lower() == 'true'
 
 SHOPIFY_BASE = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}'
+SHOPIFY_GQL  = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/graphql.json'
+ONLINE_STORE_PUB_ID = 'gid://shopify/Publication/325355798910'
 
 HEADERS_JIM = {
     'ClientAuth': JIMSPORTS_API_KEY,
@@ -94,6 +96,30 @@ def jim_request(endpoint, retries=5):
 
 
 # ─── PREU ─────────────────────────────────────────────────────────────────────
+
+def publish_to_online_store(product_gid):
+    """Publica un producte al canal Online Store via GraphQL."""
+    mutation = '''mutation($id: ID!) {
+      publishablePublish(id: $id, input: [{publicationId: "%s"}]) {
+        userErrors { message }
+      }
+    }''' % ONLINE_STORE_PUB_ID
+    payload = json.dumps({'query': mutation, 'variables': {'id': product_gid}})
+    for attempt in range(3):
+        try:
+            r = requests.post(SHOPIFY_GQL, headers=HEADERS_SHOPIFY, data=payload, timeout=30)
+            if r.status_code == 200:
+                ue = r.json().get('data', {}).get('publishablePublish', {}).get('userErrors', [])
+                if ue:
+                    print(f'    publish error: {ue[0]["message"]}')
+                return
+            if r.status_code == 429:
+                time.sleep(2)
+                continue
+        except Exception as e:
+            print(f'    publish exception: {e}')
+            time.sleep(1)
+
 
 def pvp(raw):
     try:
@@ -222,7 +248,7 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
     base_ref = product.get('reference', '')
     raw = [v for v in (product.get('variants') or []) if not v.get('discontinued')]
 
-    # Cas A: 0 o 1 variant → producte simple
+    # Cas A: 0 o 1 variant → producte simple. SKU = EAN o, si no en té, la referència
     if len(raw) <= 1:
         v = raw[0] if raw else product
         ean = v.get('ean13') or product.get('ean13')
@@ -239,7 +265,7 @@ def build_variants(product, attr_value_label, talla_label='Talla'):
 
     # Cas B: múltiples variants. Si totes les referencies tenen 2 parts
     # (REF.COLOR.TALLA) fem opcions Color + Talla separades (filtrables);
-    # sino, una sola opció "Variante".
+    # sino, una sola opció "Variante". SKU = EAN o referència si no en té.
     parsed = []
     for v in raw:
         ean = v.get('ean13')
@@ -316,6 +342,7 @@ def ensure_brand_collection(brand_name, cache):
             'title': brand_name,
             'handle': handle,
             'published': True,
+            'template_suffix': 'bulk',
             'rules': [{'column': 'tag', 'relation': 'equals', 'condition': handle}],
             'disjunctive': False,
         },
@@ -388,6 +415,8 @@ def sync():
             skipped += 1
             continue
 
+        # Replica fidel: només productes que Jim mostra a la seva botiga web.
+        # Els listings ocults/incomplets (web=False) NO s'importen (ex. els "GLOBAL").
         if not product.get('web'):
             skipped += 1
             continue
@@ -461,7 +490,7 @@ def sync():
                     'template_suffix': 'bulk',
                 },
             })
-            # Actualitzem preu + stock de TOTES les variants (per SKU/EAN), no nomes la primera
+            # Actualitzem preu + stock de TOTES les variants (per SKU/EAN), no només la primera
             for vd in variants:
                 ex = existing.get(vd['sku'])
                 if not ex:
@@ -491,6 +520,7 @@ def sync():
                 for sv, payload_v in zip(new_variants, variants):
                     if sv.get('inventory_item_id'):
                         set_inventory(sv['inventory_item_id'], location_id, payload_v['_stock'])
+                publish_to_online_store(f'gid://shopify/Product/{created_p["id"]}')
                 created += 1
                 print(f'  [{i}/{total}] {ref} {name[:40]} -> CREAT ({len(new_variants)} variants)')
             else:
