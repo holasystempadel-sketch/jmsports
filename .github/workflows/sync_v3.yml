@@ -1,0 +1,62 @@
+name: JimSports Sync v3 (nocturn)
+
+on:
+  schedule:
+    # Cada nit a la 01:30 UTC (03:30 a Madrid a l'estiu, 02:30 a l'hivern)
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+    inputs:
+      sync_limit:
+        description: 'Quants productes processar (0 = tots; si >0 el PRUNE no s''executa)'
+        required: true
+        default: '20'
+      dry_run:
+        description: 'true = nomes imprimeix, no toca res'
+        required: true
+        default: 'true'
+      prune:
+        description: 'true = elimina productes fora del cataleg en abast'
+        required: true
+        default: 'true'
+      price_multiplier:
+        description: 'Multiplicador de preu PVP'
+        required: true
+        default: '2.0'
+      debug_ref:
+        description: 'Referencia per imprimir el JSON complet (buit per cap)'
+        required: false
+        default: ''
+
+concurrency:
+  group: jimsports-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run sync_v3.py
+        env:
+          JIMSPORTS_API_KEY: ${{ secrets.JIMSPORTS_API_KEY }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          # En execucio nocturna (schedule) els inputs son buits ? defaults del script:
+          # SYNC_LIMIT=0 (tots), DRY_RUN=false, PRUNE=true, x2.0
+          SYNC_LIMIT: ${{ github.event.inputs.sync_limit || '0' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          PRUNE: ${{ github.event.inputs.prune || 'true' }}
+          PRICE_MULTIPLIER: ${{ github.event.inputs.price_multiplier || '2.0' }}
+          DEBUG_REF: ${{ github.event.inputs.debug_ref }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u sync_v3.py
