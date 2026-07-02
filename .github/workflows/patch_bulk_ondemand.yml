@@ -1,0 +1,39 @@
+name: Patch Bulk On-Demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme_id:
+        description: 'ID del tema (193671102846 = Copia de systempadel-oficial, ACTIU)'
+        required: true
+        default: '193671102846'
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Patch bajo-demanda
+        env:
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          THEME_ID: ${{ github.event.inputs.theme_id }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u patch_bulk_ondemand.py
+
+      - name: Upload backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-liquid-backup
+          path: backup_theme_file.liquid
