@@ -42,6 +42,9 @@ PRICE_MULTIPLIER  = float(os.environ.get('PRICE_MULTIPLIER') or '2.0')
 DEBUG_REF         = (os.environ.get('DEBUG_REF') or '').strip()
 DRY_RUN           = (os.environ.get('DRY_RUN') or 'false').strip().lower() == 'true'
 PRUNE             = (os.environ.get('PRUNE') or 'true').strip().lower() == 'true'
+# Pausa entre peticions a Jim: sense aquesta pausa l'API retorna 429 (rate limit)
+# i cada producte acaba trigant ~25s en reintents. Amb 0.35s va fluid (com el v2).
+JIM_DELAY         = float(os.environ.get('JIM_DELAY') or '0.35')
 
 # --- ABAST: categories Jim que corresponen al menu de systempadel.com ---------
 # Padel . Entrenamiento (+Psicomotricidad) . R&P . Equipamiento
@@ -116,6 +119,7 @@ def jim_request(endpoint, retries=5):
         try:
             r = requests.get(url, headers=HEADERS_JIM, timeout=30)
             if r.status_code == 429:
+                print(f'  Rate limit Jim ({endpoint}), esperant 10s')
                 time.sleep(10)
                 continue
             r.raise_for_status()
@@ -509,6 +513,9 @@ def sync():
 
     for i, jim_id in enumerate(jim_ids, 1):
         jim_id = str(jim_id)
+        if i % 200 == 0:
+            print(f'  ... progres {i}/{total} (creats {created} / reconstr {rebuilt} / act {updated} / fora {out_scope})')
+        time.sleep(JIM_DELAY)  # pacing anti-429 (veure JIM_DELAY)
         product = jim_request(f'product/{jim_id}')
         if not product:
             errors += 1
