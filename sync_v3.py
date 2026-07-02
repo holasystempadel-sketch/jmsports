@@ -1,30 +1,30 @@
 """
-JimSports -> Shopify sync v3 ‚Äî r√®plica fidel de l'abast System Padel.
+JimSports -> Shopify sync v3 -- replica fidel de l'abast System Padel.
 
 Canvis respecte al v2 (github_upload/sync_v2.py):
-  - FILTRE D'ABAST: nom√©s importa les categories del men√∫ de la web
-    (P√°del, Entrenamiento, R&P, Equipamiento). La resta d'esports de Jim
-    (Casual, Fitness, Nataci√≥n, F√∫tbol...) NO s'importen.
-  - RECONCILIACI√ì COMPLETA de productes existents: compara opcions i
+  - FILTRE D'ABAST: nomes importa les categories del menu de la web
+    (Padel, Entrenamiento, R&P, Equipamiento). La resta d'esports de Jim
+    (Casual, Fitness, Natacion, Futbol...) NO s'importen.
+  - RECONCILIACIO COMPLETA de productes existents: compara opcions i
     valors (Color/Talla) de cada variant amb el que hi ha a Shopify i
-    reconstrueix el set de variants si difereixen ‚Üí arregla variants
+    reconstrueix el set de variants si difereixen -> arregla variants
     trencades i n'elimina les fantasma dins de productes vius.
   - FASE PRUNE: al final de cada run complet, ELIMINA de Shopify qualsevol
-    producte amb tag `jimsports` que ja no formi part del cat√†leg en abast
+    producte amb tag `jimsports` que ja no formi part del cataleg en abast
     de Jim (descatalogats, web:false, fora d'abast). Amb guards de seguretat:
-    nom√©s si el run √©s complet (SYNC_LIMIT=0) i amb pocs errors.
+    nomes si el run es complet (SYNC_LIMIT=0) i amb pocs errors.
   - Tag `bajo-demanda` per a productes on_demand (porteries, etc.).
-  - Actualitza t√≠tol/descripci√≥ a m√©s de tags/preu/stock (paritat amb Jim).
+  - Actualitza titol/descripcio a mes de tags/preu/stock (paritat amb Jim).
   - ONLY_NEW eliminat: cada run reconcilia tot l'abast.
 
 Variables d'entorn:
-  JIMSPORTS_API_KEY  (secret) ‚Äî clau ClientAuth
-  SHOPIFY_TOKEN      (secret) ‚Äî Admin API Access Token
+  JIMSPORTS_API_KEY  (secret) -- clau ClientAuth
+  SHOPIFY_TOKEN      (secret) -- Admin API Access Token
   SHOPIFY_STORE      (defecte 'xqksc3-ua.myshopify.com')
   PRICE_MULTIPLIER   (defecte 2.0)
   SYNC_LIMIT         (defecte 0 = tots; si >0 la fase prune NO s'executa)
-  DRY_RUN            (defecte false ‚Äî imprimeix sense tocar res)
-  PRUNE              (defecte true ‚Äî posa false per desactivar les eliminacions)
+  DRY_RUN            (defecte false -- imprimeix sense tocar res)
+  PRUNE              (defecte true -- posa false per desactivar les eliminacions)
   DEBUG_REF          (opcional, ex. 'A005504')
 """
 import os
@@ -43,15 +43,15 @@ DEBUG_REF         = (os.environ.get('DEBUG_REF') or '').strip()
 DRY_RUN           = (os.environ.get('DRY_RUN') or 'false').strip().lower() == 'true'
 PRUNE             = (os.environ.get('PRUNE') or 'true').strip().lower() == 'true'
 
-# ‚îÄ‚îÄ‚îÄ ABAST: categories Jim que corresponen al men√∫ de systempadel.com ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
-# P√°del ¬∑ Entrenamiento (+Psicomotricidad) ¬∑ R&P ¬∑ Equipamiento
-# (Novedades i Outlet s√≥n flags transversals dins d'aquest abast.)
+# --- ABAST: categories Jim que corresponen al menu de systempadel.com ---------
+# Padel . Entrenamiento (+Psicomotricidad) . R&P . Equipamiento
+# (Novedades i Outlet son flags transversals dins d'aquest abast.)
 SCOPE_CATS = {
-    # P√°del
+    # Padel
     1192, 1193, 1194, 1195, 1196, 1197, 1262,
     # Entrenamiento + Psicomotricidad
     1158, 1159, 1160, 1205, 1206, 1207, 1272, 1295, 1296, 1298, 1299,
-    # R&P (b√°dminton, pickleball, tenis, tenis de mesa, frontenis)
+    # R&P (badminton, pickleball, tenis, tenis de mesa, frontenis)
     1124, 1125, 1202, 1203, 1218, 1219, 1221, 1222, 1271,
     # Equipamiento
     1161, 1257, 1258, 1259, 1260, 1261, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1270,
@@ -60,16 +60,16 @@ _scope_env = (os.environ.get('SCOPE_CATS') or '').strip()
 if _scope_env:
     SCOPE_CATS = {int(x) for x in _scope_env.split(',') if x.strip().isdigit()}
 
-# attribute_id de Jim -> nom d'opci√≥ Shopify (decodificaci√≥ nativa de /v1/attribute_values)
-ATTR_OPT = {34:'Color', 21:'Talla calzado', 29:'Talla textil', 87:'Dise√±o',
-            22:'N√∫mero', 3:'Tama√±o', 13:'Talla bal√≥n', 6:'Talla calcet√≠n',
+# attribute_id de Jim -> nom d'opcio Shopify (decodificacio nativa de /v1/attribute_values)
+ATTR_OPT = {34:'Color', 21:'Talla calzado', 29:'Talla textil', 87:'Dise\u00f1o',
+            22:'N\u00famero', 3:'Tama\u00f1o', 13:'Talla bal\u00f3n', 6:'Talla calcet\u00edn',
             11:'Peso', 41:'Pulgadas', 92:'Tejido', 79:'Talla y lado',
             32:'Medidas', 24:'Medida', 76:'Densidad', 77:'Medida y densidad',
-            72:'Fen√≥lico', 33:'Modelo'}
-ATTR_SKIP  = {16, 5, 8, 46, 52}  # Categor√≠a/Cajas/Cantidades/Palas/Overgrips (no s√≥n opcions)
-ATTR_ORDER = ['Color','Talla calzado','Talla textil','Talla bal√≥n','Talla calcet√≠n',
-              'N√∫mero','Tama√±o','Talla y lado','Pulgadas','Medida','Medidas',
-              'Densidad','Medida y densidad','Peso','Tejido','Fen√≥lico','Dise√±o','Modelo']
+            72:'Fen\u00f3lico', 33:'Modelo'}
+ATTR_SKIP  = {16, 5, 8, 46, 52}  # Categoria/Cajas/Cantidades/Palas/Overgrips (no son opcions)
+ATTR_ORDER = ['Color','Talla calzado','Talla textil','Talla bal\u00f3n','Talla calcet\u00edn',
+              'N\u00famero','Tama\u00f1o','Talla y lado','Pulgadas','Medida','Medidas',
+              'Densidad','Medida y densidad','Peso','Tejido','Fen\u00f3lico','Dise\u00f1o','Modelo']
 
 SHOPIFY_BASE = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}'
 SHOPIFY_GQL  = f'https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/graphql.json'
@@ -85,7 +85,7 @@ HEADERS_SHOPIFY = {
     'Content-Type': 'application/json',
 }
 
-# ‚îÄ‚îÄ‚îÄ HTTP HELPERS ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- HTTP HELPERS -------------------------------------------------------------
 
 def shopify_request(method, endpoint, data=None, retries=5):
     url = endpoint if endpoint.startswith('http') else f'{SHOPIFY_BASE}/{endpoint}'
@@ -129,7 +129,7 @@ def jim_request(endpoint, retries=5):
     return None
 
 
-# ‚îÄ‚îÄ‚îÄ PUBLICACI√ì ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- PUBLICACIO ---------------------------------------------------------------
 
 def publish_to_online_store(product_gid):
     """Publica un producte al canal Online Store via GraphQL."""
@@ -162,7 +162,7 @@ def pvp(raw):
         return '0.00'
 
 
-# ‚îÄ‚îÄ‚îÄ HANDLES ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- HANDLES ------------------------------------------------------------------
 
 def slugify(text):
     import unicodedata
@@ -170,7 +170,7 @@ def slugify(text):
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')[:200]
 
 
-# ‚îÄ‚îÄ‚îÄ MAPPINGS GLOBALS ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- MAPPINGS GLOBALS ---------------------------------------------------------
 
 def fetch_brand_map():
     data = jim_request('brands') or []
@@ -178,7 +178,7 @@ def fetch_brand_map():
 
 
 def fetch_attribute_value_label():
-    """Retorna {attribute_value_id: (attribute_id, 'NOM')} en castell√†."""
+    """Retorna {attribute_value_id: (attribute_id, 'NOM')} en castella."""
     data = jim_request('attribute_values') or []
     out = {}
     for av in data:
@@ -189,7 +189,7 @@ def fetch_attribute_value_label():
 
 
 def fetch_category_map():
-    """Retorna {category_id: 'Nom de la categoria'} en castell√†."""
+    """Retorna {category_id: 'Nom de la categoria'} en castella."""
     data = jim_request('categories') or []
     out = {}
     for c in data:
@@ -200,7 +200,7 @@ def fetch_category_map():
     return out
 
 
-# ‚îÄ‚îÄ‚îÄ PRODUCTES SHOPIFY EXISTENTS ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- PRODUCTES SHOPIFY EXISTENTS ----------------------------------------------
 
 def fetch_existing():
     """Retorna (existing{ean:...}, handles, by_ref, by_handle, shop_products{pid:...}).
@@ -260,7 +260,7 @@ def fetch_existing():
     return existing, handles, by_ref, by_handle, shop_products
 
 
-# ‚îÄ‚îÄ‚îÄ INVENTARI ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- INVENTARI ----------------------------------------------------------------
 
 def get_location_id():
     r = shopify_request('GET', 'shop.json')
@@ -277,10 +277,10 @@ def set_inventory(inventory_item_id, location_id, quantity):
     })
 
 
-# ‚îÄ‚îÄ‚îÄ VARIANTS ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- VARIANTS -----------------------------------------------------------------
 
 def _variant_attrs(v, val_attr):
-    """Decodifica l'attribute_value d'una variant -> {opci√≥: valor}."""
+    """Decodifica l'attribute_value d'una variant -> {opcio: valor}."""
     d = {}
     for avid in (v.get('attribute_value') or []):
         aid, name = val_attr.get(avid, (None, None))
@@ -294,11 +294,11 @@ def _variant_attrs(v, val_attr):
 
 def build_variants(product, val_attr):
     """Construeix variants amb opcions netes decodificant `attribute_value`
-    de cada variant (mai la refer√®ncia). Fallback a "Variante"."""
+    de cada variant (mai la referencia). Fallback a "Variante"."""
     from collections import defaultdict
     raw = [v for v in (product.get('variants') or []) if not v.get('discontinued')]
 
-    # Cas A: 0 o 1 variant ‚Üí producte simple
+    # Cas A: 0 o 1 variant -> producte simple
     if len(raw) <= 1:
         v = raw[0] if raw else product
         ean = v.get('ean13') or product.get('ean13')
@@ -312,7 +312,7 @@ def build_variants(product, val_attr):
             '_stock': int(v.get('stock') or product.get('stock') or 0),
         }], None, None
 
-    # Cas B: m√∫ltiples variants ‚Üí decodificar attribute_value
+    # Cas B: multiples variants -> decodificar attribute_value
     rows = []
     for v in raw:
         ean = v.get('ean13')
@@ -369,11 +369,11 @@ def build_variants(product, val_attr):
     return out, ['Variante'], None
 
 
-# ‚îÄ‚îÄ‚îÄ RECONCILIACI√ì ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- RECONCILIACIO ------------------------------------------------------------
 
 def needs_rebuild(shop_p, variants, option_names):
     """True si el set de variants de Shopify no coincideix amb el desitjat
-    (opcions, SKUs o valors Color/Talla) ‚Üí cal reconstruir-lo sencer."""
+    (opcions, SKUs o valors Color/Talla) -> cal reconstruir-lo sencer."""
     desired_opts = option_names or []
     shop_opts = [o for o in (shop_p.get('options') or []) if o and o != 'Title']
     if [o for o in desired_opts] != shop_opts:
@@ -393,7 +393,7 @@ def needs_rebuild(shop_p, variants, option_names):
 
 def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     """PUT del producte amb el set de variants complet: Shopify actualitza les
-    que porten id, crea les noves i ELIMINA les que no hi s√≥n (fantasmes)."""
+    que porten id, crea les noves i ELIMINA les que no hi son (fantasmes)."""
     by_sku = {v['sku']: v for v in shop_p['variants']}
     payload_variants = []
     for vd in variants:
@@ -406,7 +406,7 @@ def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     if option_names:
         data['product']['options'] = [{'name': n} for n in option_names]
     else:
-        # producte que queda amb 1 sola variant ‚Üí opci√≥ per defecte de Shopify
+        # producte que queda amb 1 sola variant -> opcio per defecte de Shopify
         data['product']['options'] = [{'name': 'Title'}]
         for pv in payload_variants:
             pv['option1'] = 'Default Title'
@@ -422,7 +422,7 @@ def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     return True
 
 
-# ‚îÄ‚îÄ‚îÄ COL¬∑LECCIONS PER MARCA ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- COL.LECCIONS PER MARCA ---------------------------------------------------
 
 def ensure_brand_collection(brand_name, cache):
     if not brand_name:
@@ -454,7 +454,7 @@ def ensure_brand_collection(brand_name, cache):
     return None
 
 
-# ‚îÄ‚îÄ‚îÄ TAGS ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- TAGS ---------------------------------------------------------------------
 
 def build_tags(product, brand):
     brand_slug = re.sub(r'[^a-z0-9]+', '-', brand.lower()).strip('-') if brand else 'sin-marca'
@@ -469,12 +469,12 @@ def build_tags(product, brand):
     return ','.join(['jimsports', f'marca-{brand_slug}'] + cats + extras)
 
 
-# ‚îÄ‚îÄ‚îÄ CICLE PRINCIPAL ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# --- CICLE PRINCIPAL ----------------------------------------------------------
 
 def sync():
     print('=== JimSports -> Shopify (v3) ===')
-    print(f'Store: {SHOPIFY_STORE}  ¬∑  x{PRICE_MULTIPLIER}  ¬∑  Limit: {SYNC_LIMIT or "TOTS"}'
-          f'  ¬∑  DRY_RUN: {DRY_RUN}  ¬∑  PRUNE: {PRUNE}  ¬∑  Abast: {len(SCOPE_CATS)} categories')
+    print(f'Store: {SHOPIFY_STORE}  .  x{PRICE_MULTIPLIER}  .  Limit: {SYNC_LIMIT or "TOTS"}'
+          f'  .  DRY_RUN: {DRY_RUN}  .  PRUNE: {PRUNE}  .  Abast: {len(SCOPE_CATS)} categories')
 
     location_id = get_location_id()
     if not location_id:
@@ -496,7 +496,7 @@ def sync():
 
     jim_ids = jim_request('products')
     if jim_ids is None:
-        print('ERROR: /v1/products no respon ‚Äî abortem (cap eliminaci√≥)')
+        print('ERROR: /v1/products no respon -- abortem (cap eliminacio)')
         return
     if SYNC_LIMIT:
         jim_ids = jim_ids[:SYNC_LIMIT]
@@ -504,7 +504,7 @@ def sync():
     print(f'{total} productes Jim a processar\n')
 
     brand_collection_cache = {}
-    touched_ids = set()   # productes Shopify confirmats al cat√†leg en abast
+    touched_ids = set()   # productes Shopify confirmats al cataleg en abast
     created = updated = rebuilt = unchanged = out_scope = skipped = errors = 0
 
     for i, jim_id in enumerate(jim_ids, 1):
@@ -520,12 +520,12 @@ def sync():
             print(json.dumps(product, indent=2, ensure_ascii=False)[:5000])
             print('=== /DEBUG ===\n')
 
-        # Regles de publicaci√≥ (Jim Sports): descatalogat o ocult a la seva web ‚Üí fora
+        # Regles de publicacio (Jim Sports): descatalogat o ocult a la seva web -> fora
         if product.get('discontinued') or not product.get('web'):
             skipped += 1
             continue
 
-        # FILTRE D'ABAST: alguna categoria del producte dins del men√∫ System Padel
+        # FILTRE D'ABAST: alguna categoria del producte dins del menu System Padel
         cat_ids = set(product.get('category_ids') or [])
         if not (cat_ids & SCOPE_CATS):
             out_scope += 1
@@ -551,14 +551,14 @@ def sync():
                 product_type = cats_map[cid]
                 break
 
-        # Sense preu = "consultar precio" (decisi√≥ Pau + regla Jim)
+        # Sense preu = "consultar precio" (decisio Pau + regla Jim)
         try:
             if variants and all(float(v.get('price') or 0) == 0 for v in variants):
                 tags = tags + ',consultar-precio'
         except (TypeError, ValueError):
             pass
 
-        # Localitzar el producte existent: ref ‚Üí EAN ‚Üí handle
+        # Localitzar el producte existent: ref -> EAN -> handle
         ref_tag = f'ref-{slugify(ref)}' if ref else ''
         existing_pid = by_ref.get(ref_tag)
         if not existing_pid:
@@ -615,7 +615,7 @@ def sync():
                                               option_names, location_id)
                 if ok:
                     rebuilt += 1
-                    print(f'  [{i}/{total}] {ref} {name[:40]} -> RECONSTRU√èT ({len(variants)} variants)')
+                    print(f'  [{i}/{total}] {ref} {name[:40]} -> RECONSTRUIT ({len(variants)} variants)')
                 else:
                     errors += 1
             else:
@@ -670,13 +670,13 @@ def sync():
                 errors += 1
             time.sleep(0.4)
 
-    # ‚îÄ‚îÄ‚îÄ FASE PRUNE: eliminar productes jimsports fora del cat√†leg en abast ‚îÄ‚îÄ
+    # --- FASE PRUNE: eliminar productes jimsports fora del cataleg en abast --
     pruned = 0
     to_prune = [pid for pid in shop_products if pid not in touched_ids]
     if not PRUNE:
-        print(f'\nPRUNE desactivat ‚Äî {len(to_prune)} productes quedarien fora (no s\'elimina res)')
+        print(f'\nPRUNE desactivat -- {len(to_prune)} productes quedarien fora (no s\'elimina res)')
     elif SYNC_LIMIT:
-        print(f'\nPRUNE saltat (SYNC_LIMIT actiu) ‚Äî mai s\'elimina en runs parcials')
+        print(f'\nPRUNE saltat (SYNC_LIMIT actiu) -- mai s\'elimina en runs parcials')
     elif errors > max(5, total * 0.01):
         print(f'\nPRUNE saltat per seguretat: {errors} errors durant el run')
     else:
@@ -697,7 +697,7 @@ def sync():
 
     print('\n=== RESUM ===')
     print(f'Creats:        {created}')
-    print(f'Reconstru√Øts:  {rebuilt}')
+    print(f'Reconstruits:  {rebuilt}')
     print(f'Actualitzats:  {updated}')
     print(f'Sense canvis:  {unchanged}')
     print(f'Fora d\'abast:  {out_scope}')
