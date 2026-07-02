@@ -1,0 +1,44 @@
+name: Add GSC Meta
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme_id:
+        description: 'ID del tema (193671102846 = Copia de systempadel-oficial, ACTIU)'
+        required: true
+        default: '193671102846'
+      gsc_token:
+        description: 'Token google-site-verification'
+        required: true
+        default: 'CEHanQli-4mpQ9GE5bh6U6DASh2qmirPaKaxR5wzOUw'
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Add GSC meta
+        env:
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          THEME_ID: ${{ github.event.inputs.theme_id }}
+          GSC_TOKEN: ${{ github.event.inputs.gsc_token }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u add_gsc_meta.py
+
+      - name: Upload backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-liquid-backup
+          path: backup_theme_file.liquid
