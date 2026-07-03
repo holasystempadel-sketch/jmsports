@@ -412,6 +412,30 @@ def needs_rebuild(shop_p, variants, option_names):
     return desired != actual
 
 
+def sku_only_change(shop_p, variants):
+    """Si l'UNICA diferencia entre Shopify i el desitjat son els SKUs (mateix
+    EAN, mateixes opcions i mateix nombre de variants), retorna la llista de
+    (variant_id, nou_sku) a corregir amb un simple PUT -- molt mes rapid que
+    reconstruir el producte sencer. Retorna None si cal un rebuild de veritat."""
+    by_key = {_vkey(v['sku'], v.get('barcode')): v for v in shop_p['variants']}
+    if len(by_key) != len(variants):
+        return None
+    changes = []
+    for vd in variants:
+        ex = by_key.get(_vkey(vd['sku'], vd.get('barcode')))
+        if not ex:
+            return None
+        ex_opts = tuple(x for x in (ex['option1'], ex['option2'], ex['option3'])
+                        if x not in (None, 'Default Title'))
+        de_opts = tuple(vd.get(f'option{i}') for i in (1, 2, 3)
+                        if vd.get(f'option{i}') is not None)
+        if ex_opts != de_opts:
+            return None
+        if (ex['sku'] or '') != vd['sku']:
+            changes.append((ex['id'], vd['sku']))
+    return changes
+
+
 def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     """PUT del producte amb el set de variants complet: Shopify actualitza les
     que porten id (aparellades per EAN), crea les noves i ELIMINA les que no
@@ -637,13 +661,27 @@ def sync():
                     },
                 })
             if rebuild:
-                ok = rebuild_product_variants(existing_pid, shop_p, variants,
-                                              option_names, location_id)
-                if ok:
-                    rebuilt += 1
-                    print(f'  [{i}/{total}] {ref} {name[:40]} -> RECONSTRUIT ({len(variants)} variants)')
+                # Optimitzacio: si nomes canvien els SKUs (migracio EAN -> ref Jim),
+                # fer PUT de variant directe en lloc de reconstruir tot el producte.
+                sku_changes = sku_only_change(shop_p, variants)
+                if sku_changes is not None:
+                    for vid, newsku in sku_changes:
+                        shopify_request('PUT', f'variants/{vid}.json',
+                                        data={'variant': {'id': vid, 'sku': newsku}})
+                        time.sleep(0.2)
+                    if sku_changes:
+                        updated += 1
+                        print(f'  [{i}/{total}] {ref} {name[:40]} -> SKUs migrats ({len(sku_changes)})')
+                    else:
+                        unchanged += 1
                 else:
-                    errors += 1
+                    ok = rebuild_product_variants(existing_pid, shop_p, variants,
+                                                  option_names, location_id)
+                    if ok:
+                        rebuilt += 1
+                        print(f'  [{i}/{total}] {ref} {name[:40]} -> RECONSTRUIT ({len(variants)} variants)')
+                    else:
+                        errors += 1
             else:
                 for kind, ex_v, vd in price_stock_changes:
                     if kind == 'price':
