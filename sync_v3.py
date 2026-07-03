@@ -16,6 +16,9 @@ Canvis respecte al v2 (github_upload/sync_v2.py):
   - Tag `bajo-demanda` per a productes on_demand (porteries, etc.).
   - Actualitza titol/descripcio a mes de tags/preu/stock (paritat amb Jim).
   - ONLY_NEW eliminat: cada run reconcilia tot l'abast.
+  - SKU = referencia Jim (ex. 77542.019.2) i barcode = EAN13. L'aparellament
+    de variants es fa per BARCODE (EAN, clau estable); el primer run despres
+    d'aquest canvi migra els SKUs antics (que eren l'EAN) conservant els ids.
 
 Variables d'entorn:
   JIMSPORTS_API_KEY  (secret) -- clau ClientAuth
@@ -237,6 +240,7 @@ def fetch_existing():
                 'variants': [{
                     'id': v['id'],
                     'sku': (v.get('sku') or '').strip(),
+                    'barcode': (v.get('barcode') or '').strip(),
                     'price': v.get('price'),
                     'option1': v.get('option1'), 'option2': v.get('option2'),
                     'option3': v.get('option3'),
@@ -250,12 +254,18 @@ def fetch_existing():
                     by_ref[t] = p['id']
             for v in p.get('variants', []):
                 sku = (v.get('sku') or '').strip()
-                if sku:
-                    existing[sku] = {
-                        'product_id': p['id'],
-                        'variant_id': v['id'],
-                        'inventory_item_id': v.get('inventory_item_id'),
-                    }
+                barcode = (v.get('barcode') or '').strip()
+                info = {
+                    'product_id': p['id'],
+                    'variant_id': v['id'],
+                    'inventory_item_id': v.get('inventory_item_id'),
+                }
+                # indexem per EAN (barcode) com a clau principal i per SKU
+                # com a secundaria (els SKUs antics eren l'EAN)
+                if barcode and barcode not in existing:
+                    existing[barcode] = info
+                if sku and sku not in existing:
+                    existing[sku] = info
         url = None
         for part in r.headers.get('Link', '').split(','):
             if 'rel="next"' in part:
@@ -306,7 +316,7 @@ def build_variants(product, val_attr):
     if len(raw) <= 1:
         v = raw[0] if raw else product
         ean = v.get('ean13') or product.get('ean13')
-        sku = ean or v.get('reference') or product.get('reference')
+        sku = v.get('reference') or product.get('reference') or ean
         if not sku:
             return None, None, 'no-ean'
         return [{
@@ -320,7 +330,7 @@ def build_variants(product, val_attr):
     rows = []
     for v in raw:
         ean = v.get('ean13')
-        sku = ean or v.get('reference')
+        sku = v.get('reference') or ean
         if not sku:
             continue
         rows.append((v, sku, ean, _variant_attrs(v, val_attr)))
@@ -375,34 +385,43 @@ def build_variants(product, val_attr):
 
 # --- RECONCILIACIO ------------------------------------------------------------
 
+def _vkey(sku, barcode):
+    """Clau estable d'una variant: EAN (barcode) si en te, sino el SKU."""
+    return (barcode or sku or '').strip()
+
+
 def needs_rebuild(shop_p, variants, option_names):
     """True si el set de variants de Shopify no coincideix amb el desitjat
-    (opcions, SKUs o valors Color/Talla) -> cal reconstruir-lo sencer."""
+    (opcions, SKUs, EANs o valors Color/Talla) -> cal reconstruir-lo sencer.
+    La clau de comparacio es l'EAN; el SKU forma part de la signatura, aixi
+    un canvi de SKU (migracio EAN -> referencia Jim) tambe dispara el rebuild."""
     desired_opts = option_names or []
     shop_opts = [o for o in (shop_p.get('options') or []) if o and o != 'Title']
     if [o for o in desired_opts] != shop_opts:
         return True
-    def sig(vs, keyfn_sku, keyfn_opts):
-        return {keyfn_sku(v): keyfn_opts(v) for v in vs}
-    desired = {v['sku']: tuple(v.get(f'option{i}') for i in (1, 2, 3)
-                               if v.get(f'option{i}') is not None)
-               for v in variants}
+    desired = {}
+    for v in variants:
+        opts = tuple(v.get(f'option{i}') for i in (1, 2, 3)
+                     if v.get(f'option{i}') is not None)
+        desired[_vkey(v['sku'], v.get('barcode'))] = (v['sku'],) + opts
     actual = {}
     for v in shop_p['variants']:
         opts = tuple(x for x in (v['option1'], v['option2'], v['option3'])
                      if x is not None and x != 'Default Title')
-        actual[v['sku']] = opts
+        actual[_vkey(v['sku'], v.get('barcode'))] = (v['sku'],) + opts
     return desired != actual
 
 
 def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     """PUT del producte amb el set de variants complet: Shopify actualitza les
-    que porten id, crea les noves i ELIMINA les que no hi son (fantasmes)."""
-    by_sku = {v['sku']: v for v in shop_p['variants']}
+    que porten id (aparellades per EAN), crea les noves i ELIMINA les que no
+    hi son (fantasmes). Aparellant per EAN es conserven els ids de variant
+    encara que el SKU canvii (migracio EAN -> referencia Jim)."""
+    by_key = {_vkey(v['sku'], v.get('barcode')): v for v in shop_p['variants']}
     payload_variants = []
     for vd in variants:
         pv = {k: v for k, v in vd.items() if not k.startswith('_')}
-        ex = by_sku.get(vd['sku'])
+        ex = by_key.get(_vkey(vd['sku'], vd.get('barcode')))
         if ex:
             pv['id'] = ex['id']
         payload_variants.append(pv)
@@ -417,12 +436,12 @@ def rebuild_product_variants(pid, shop_p, variants, option_names, location_id):
     r = shopify_request('PUT', f'products/{pid}.json', data=data)
     if not (r and r.json().get('product')):
         return False
-    # stock de totes les variants resultants (per SKU)
-    stock_by_sku = {v['sku']: v['_stock'] for v in variants}
+    # stock de totes les variants resultants (per EAN)
+    stock_by_key = {_vkey(v['sku'], v.get('barcode')): v['_stock'] for v in variants}
     for sv in r.json()['product'].get('variants', []):
-        sku = (sv.get('sku') or '').strip()
-        if sku in stock_by_sku and sv.get('inventory_item_id'):
-            set_inventory(sv['inventory_item_id'], location_id, stock_by_sku[sku])
+        key = _vkey(sv.get('sku'), sv.get('barcode'))
+        if key in stock_by_key and sv.get('inventory_item_id'):
+            set_inventory(sv['inventory_item_id'], location_id, stock_by_key[key])
     return True
 
 
@@ -570,7 +589,7 @@ def sync():
         existing_pid = by_ref.get(ref_tag)
         if not existing_pid:
             for vd in variants:
-                ex = existing.get(vd['sku'])
+                ex = existing.get(_vkey(vd['sku'], vd.get('barcode'))) or existing.get(vd['sku'])
                 if ex:
                     existing_pid = ex['product_id']; break
         if not existing_pid:
@@ -585,9 +604,9 @@ def sync():
                             or shop_p['title'] != name)
             price_stock_changes = []
             if shop_p and not rebuild:
-                by_sku = {v['sku']: v for v in shop_p['variants']}
+                by_key = {_vkey(v['sku'], v.get('barcode')): v for v in shop_p['variants']}
                 for vd in variants:
-                    ex_v = by_sku.get(vd['sku'])
+                    ex_v = by_key.get(_vkey(vd['sku'], vd.get('barcode')))
                     if not ex_v:
                         continue
                     if str(ex_v.get('price')) != str(vd['price']):
