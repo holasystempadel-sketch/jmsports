@@ -61,6 +61,10 @@ SCOPE_CATS = {
     1124, 1125, 1202, 1203, 1218, 1219, 1221, 1222, 1271,
     # Equipamiento
     1161, 1257, 1258, 1259, 1260, 1261, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1270,
+    # Textil y calzado (menu sencer de Jim: casual, calzado, calcetines, playa,
+    # textil equipaciones, promocional i linea work) -- decisio Pau 6-jul-2026
+    32, 1144, 1145, 1146, 1147, 1148, 1166, 1233, 1240, 1274, 1286,
+    1290, 1291, 1292, 1293, 1300, 1301, 1302, 1305,
 }
 _scope_env = (os.environ.get('SCOPE_CATS') or '').strip()
 if _scope_env:
@@ -281,6 +285,19 @@ def get_location_id():
     if not r:
         return None
     return r.json().get('shop', {}).get('primary_location_id')
+
+
+def delete_conflicting_redirect(handle):
+    """Elimina qualsevol redireccio URL que tapi /products/<handle>.
+    Cas real: productes eliminats (amb redireccio 301 creada) que tornen
+    a entrar al cataleg -- sense aixo, la redireccio te prioritat i el
+    producte queda invisible."""
+    r = shopify_request('GET', f'redirects.json?path=/products/{handle}')
+    if not r:
+        return
+    for red in r.json().get('redirects', []):
+        shopify_request('DELETE', f'redirects/{red["id"]}.json')
+        print(f'    redireccio conflictiva eliminada: /products/{handle}')
 
 
 def set_inventory(inventory_item_id, location_id, quantity):
@@ -722,6 +739,7 @@ def sync():
             if r and r.json().get('product'):
                 created_p = r.json()['product']
                 touched_ids.add(created_p['id'])
+                delete_conflicting_redirect(created_p.get('handle') or handle)
                 for sv, payload_v in zip(created_p.get('variants', []), variants):
                     if sv.get('inventory_item_id'):
                         set_inventory(sv['inventory_item_id'], location_id, payload_v['_stock'])
