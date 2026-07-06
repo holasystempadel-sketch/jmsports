@@ -291,13 +291,22 @@ def delete_conflicting_redirect(handle):
     """Elimina qualsevol redireccio URL que tapi /products/<handle>.
     Cas real: productes eliminats (amb redireccio 301 creada) que tornen
     a entrar al cataleg -- sense aixo, la redireccio te prioritat i el
-    producte queda invisible."""
-    r = shopify_request('GET', f'redirects.json?path=/products/{handle}')
-    if not r:
-        return
-    for red in r.json().get('redirects', []):
-        shopify_request('DELETE', f'redirects/{red["id"]}.json')
-        print(f'    redireccio conflictiva eliminada: /products/{handle}')
+    producte queda invisible.
+
+    NO bloquejant: una sola crida sense reintents. Si el token no te
+    l'scope read_content (403), salta silenciosament -- els conflictes
+    es resolen despres del run des del connector Shopify amb permisos."""
+    try:
+        url = f'{SHOPIFY_BASE}/redirects.json?path=/products/{handle}'
+        r = requests.get(url, headers=HEADERS_SHOPIFY, timeout=15)
+        if r.status_code != 200:
+            return
+        for red in r.json().get('redirects', []):
+            requests.delete(f'{SHOPIFY_BASE}/redirects/{red["id"]}.json',
+                            headers=HEADERS_SHOPIFY, timeout=15)
+            print(f'    redireccio conflictiva eliminada: /products/{handle}')
+    except requests.exceptions.RequestException:
+        pass
 
 
 def set_inventory(inventory_item_id, location_id, quantity):
