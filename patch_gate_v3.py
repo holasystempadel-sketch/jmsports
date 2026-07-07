@@ -1,29 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-patch_gate_v3.py  (System Padel - Komunika)
+patch_gate_v3.py  (System Padel - Komunika)  --  CORRECCIO multi-seed
 
-Actualitza el gate del Catalogo profesional a layout/theme.liquid (tema MAIN):
+Corregeix el gate desplegat: el seed dinamic per Liquid ('sp_seed_id') fallava
+perque les col-leccions tenen molts productes AGOTADO al principi (el primer
+producte disponible no apareixia dins del limit del bucle). Es substitueix per
+una llista fixa de 3 productes amb estoc MASSIU (desenes de milers d'unitats);
+es posen tots en un sol carret de validacio: els que tenen estoc s'afegeixen,
+els esgotats s'ignoren -> applicable distingeix codi real de fals de forma fiable.
+Zero manteniment realista (3 productes de 33k-97k u.; cauria nomes si els 3
+s'esgotessin o s'esborressin alhora).
 
-  1) VALIDACIO DINAMICA PER CODI DE DESCOMPTE
-     - spCheck() valida el codi escrit contra els descomptes VIUS de Shopify
-       via Storefront API tokenless (cartCreate + discountCodes). Si
-       applicable == true -> obre + aplica el descompte al carret real
-       (/discount/CODE) i aterra desbloquejat.
-     - Qualsevol codi de descompte nou creat a l'admin funciona sol.
-     - El codi mestre 'systempadel2026' segueix funcionant com a alternativa.
-
-  2) SEED DINAMIC (sense manteniment)
-     - La validacio necessita un producte al carret. En lloc d'un producte
-       fix, el Liquid tria en el moment de renderitzar el primer producte
-       DISPONIBLE de la col-leccio 'padel' (fallback 'equipamiento'). Aixi
-       mai depen de l'estoc d'un producte concret.
-
-  3) LOGO CENTRAT
-     - L'<img> del logo es block (reset del tema) dins d'un contenidor
-       text-align:center -> no es centra. S'afegeix display:block;margin:0 auto.
-
-Idempotent: si ja hi ha 'cartCreate' al fitxer, no fa res.
+Transforma l'estat DESPLEGAT (v3 amb sp_seed_id/SP_SEED) a la versio multi-seed.
+Idempotent: si ja hi ha 'SP_SEEDS' al fitxer, no fa res.
 Requereix env: SHOPIFY_STORE (default xqksc3-ua) i SHOPIFY_TOKEN (write_themes).
 """
 
@@ -34,7 +24,7 @@ import urllib.request
 STORE = os.environ.get("SHOPIFY_STORE", "xqksc3-ua")
 TOKEN = os.environ["SHOPIFY_TOKEN"]
 API = "2024-10"
-THEME_ID = "gid://shopify/OnlineStoreTheme/193671102846"  # Copia de systempadel-oficial (MAIN)
+THEME_ID = "gid://shopify/OnlineStoreTheme/193671102846"
 FILENAME = "layout/theme.liquid"
 
 ENDPOINT = "https://%s.myshopify.com/admin/api/%s/graphql.json" % (STORE, API)
@@ -74,36 +64,10 @@ mutation($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
 }
 """
 
-# ---- Anchors (exact match against current theme.liquid) --------------------
+# ---- Anchors (match the currently DEPLOYED v3 gate) -----------------------
 
-OLD_LOGO = (
-    '<img src="https://cdn.shopify.com/s/files/1/0983/7209/2286/files/'
-    'logotip_systempadel.png?v=1774447505" alt="System Padel" '
-    'style="max-height:60px;width:auto;">'
-)
-NEW_LOGO = (
-    '<img src="https://cdn.shopify.com/s/files/1/0983/7209/2286/files/'
-    'logotip_systempadel.png?v=1774447505" alt="System Padel" '
-    'style="max-height:60px;width:auto;display:block;margin:0 auto;">'
-)
-
-# Anchor starts at the <script> line and covers ONLY the spCheck() function
-# (spToggle + keypress listener are left untouched after it).
-OLD_ANCHOR = """      <script>
-        function spCheck() {
-          var code = document.getElementById('sp-input').value;
-          if (code === 'systempadel2026') {
-            fetch('/cart/update.js', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ attributes: { sp_access: 'systempadel2026', sp_access_ts: String(Math.floor(Date.now()/1000)) } })
-            }).then(function(){ window.location.reload(); });
-          } else {
-            document.getElementById('sp-error').style.display = 'block';
-          }
-        }"""
-
-NEW_ANCHOR = """      {%- liquid
+# 1) Remove the dynamic Liquid seed + SP_SEED var; use a fixed massive-stock list.
+OLD_1 = """      {%- liquid
         assign sp_seed_id = ''
         for p in collections['padel'].products
           if p.available
@@ -121,27 +85,14 @@ NEW_ANCHOR = """      {%- liquid
         endif
       -%}
       <script>
-        var SP_SEED = 'gid://shopify/ProductVariant/{{ sp_seed_id }}';
-        function spUnlock() {
-          return fetch('/cart/update.js', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ attributes: { sp_access: 'systempadel2026', sp_access_ts: String(Math.floor(Date.now()/1000)) } })
-          });
-        }
-        async function spCheck() {
-          var input = document.getElementById('sp-input');
-          var err = document.getElementById('sp-error');
-          var code = (input.value || '').trim();
-          err.style.display = 'none';
-          if (!code) { return; }
-          // Master code keeps working as a fallback.
-          if (code === 'systempadel2026') {
-            try { await spUnlock(); } catch (e) {}
-            window.location.reload();
-            return;
-          }
-          // Need a seed product to validate a discount against; if none, only master works.
+        var SP_SEED = 'gid://shopify/ProductVariant/{{ sp_seed_id }}';"""
+
+NEW_1 = """      <script>
+        // Massive-stock seed products (33k-97k units) used only to build a validation cart.
+        var SP_SEEDS = ['gid://shopify/ProductVariant/57478671663486','gid://shopify/ProductVariant/57478450348414','gid://shopify/ProductVariant/57478567428478'];"""
+
+# 2) Replace the single-seed validation with a multi-line one.
+OLD_2 = """          // Need a seed product to validate a discount against; if none, only master works.
           if (!SP_SEED || SP_SEED.charAt(SP_SEED.length - 1) === '/') {
             err.style.display = 'block';
             return;
@@ -149,26 +100,14 @@ NEW_ANCHOR = """      {%- liquid
           // Validate the typed code against live Shopify discounts (tokenless Storefront API).
           var okCode = false;
           try {
-            var q = 'mutation{cartCreate(input:{lines:[{merchandiseId:"' + SP_SEED + '",quantity:1}],discountCodes:[' + JSON.stringify(code) + ']}){cart{discountCodes{code applicable}}}}';
-            var r = await fetch('/api/2025-07/graphql.json', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: q })
-            });
-            if (r.ok) {
-              var j = await r.json();
-              if (!j.errors) {
-                var dcs = (((j.data || {}).cartCreate || {}).cart || {}).discountCodes || [];
-                okCode = dcs.some(function (d) { return d.applicable; });
-              }
-            }
-          } catch (e) {}
-          if (!okCode) { err.style.display = 'block'; return; }
-          // Valid discount code -> unlock (existing mechanism) then apply the discount
-          // to the real cart and land unlocked.
-          try { await spUnlock(); } catch (e) {}
-          window.location.href = '/discount/' + encodeURIComponent(code) + '?redirect=/pages/tienda-online';
-        }"""
+            var q = 'mutation{cartCreate(input:{lines:[{merchandiseId:"' + SP_SEED + '",quantity:1}],discountCodes:[' + JSON.stringify(code) + ']}){cart{discountCodes{code applicable}}}}';"""
+
+NEW_2 = """          // Validate the typed code against live Shopify discounts (tokenless Storefront API).
+          // Add all seed products in one cart; in-stock ones are added, out-of-stock ignored.
+          var okCode = false;
+          try {
+            var lines = SP_SEEDS.map(function (v) { return '{merchandiseId:"' + v + '",quantity:1}'; }).join(',');
+            var q = 'mutation{cartCreate(input:{lines:[' + lines + '],discountCodes:[' + JSON.stringify(code) + ']}){cart{discountCodes{code applicable}}}}';"""
 
 
 def main():
@@ -178,28 +117,25 @@ def main():
         raise SystemExit("ERROR: %s not found on theme" % FILENAME)
     content = nodes[0]["body"]["content"]
 
-    if "cartCreate" in content:
-        print("SKIP: gate v3 already present (cartCreate found). No changes.")
+    if "SP_SEEDS" in content:
+        print("SKIP: multi-seed already present (SP_SEEDS found). No changes.")
         return
 
-    with open("backup_theme_liquid_v3.liquid", "w", encoding="utf-8") as f:
+    with open("backup_theme_liquid_v3b.liquid", "w", encoding="utf-8") as f:
         f.write(content)
-    print("Backup written: backup_theme_liquid_v3.liquid (%d bytes)" % len(content))
+    print("Backup written: backup_theme_liquid_v3b.liquid (%d bytes)" % len(content))
 
-    n_logo = content.count(OLD_LOGO)
-    n_anchor = content.count(OLD_ANCHOR)
-    if n_logo != 1:
-        raise SystemExit("ERROR: logo anchor found %d times (expected 1). Aborting." % n_logo)
-    if n_anchor != 1:
-        raise SystemExit("ERROR: spCheck anchor found %d times (expected 1). Aborting." % n_anchor)
+    if content.count(OLD_1) != 1:
+        raise SystemExit("ERROR: anchor OLD_1 found %d times (expected 1). Aborting." % content.count(OLD_1))
+    if content.count(OLD_2) != 1:
+        raise SystemExit("ERROR: anchor OLD_2 found %d times (expected 1). Aborting." % content.count(OLD_2))
 
-    new_content = content.replace(OLD_LOGO, NEW_LOGO).replace(OLD_ANCHOR, NEW_ANCHOR)
+    new_content = content.replace(OLD_1, NEW_1).replace(OLD_2, NEW_2)
 
     if new_content == content:
         raise SystemExit("ERROR: no changes applied. Aborting.")
-    for token in ("cartCreate", "display:block;margin:0 auto", "sp_seed_id", "SP_SEED"):
-        if token not in new_content:
-            raise SystemExit("ERROR: sanity check failed (missing %r). Aborting." % token)
+    if "SP_SEEDS" not in new_content or "sp_seed_id" in new_content or "SP_SEED " in new_content:
+        raise SystemExit("ERROR: sanity check failed after replace. Aborting.")
 
     res = gql(WRITE_Q, {
         "themeId": THEME_ID,
@@ -209,7 +145,7 @@ def main():
     if errs:
         raise SystemExit("themeFilesUpsert userErrors: %s" % json.dumps(errs, ensure_ascii=False))
     print("OK: %s updated (%d -> %d bytes)." % (FILENAME, len(content), len(new_content)))
-    print("Deployed: dynamic discount-code gate (dynamic seed) + centered logo.")
+    print("Deployed: multi-seed discount-code validation (robust, no stock dependency).")
 
 
 if __name__ == "__main__":
