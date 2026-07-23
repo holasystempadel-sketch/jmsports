@@ -1,0 +1,30 @@
+name: Patch UX
+
+on:
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Patch UX (boto compra duplicat+sticky, carret en negre)
+        env:
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          PYTHONUNBUFFERED: '1'
+        run: python -u patch_ux.py
+
+      - name: Upload backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-backup
+          path: backup_theme_liquid_ux.liquid
